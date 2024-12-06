@@ -202,7 +202,7 @@ def send_message():
 
     except Exception as e:
         logger.error("Error processing message: %r", e, exc_info=True)
-        return jsonify({'error': f'Failed to process message: {str(e)}')}), 500
+        return jsonify({'error': f'Failed to process message: {str(e)}'}), 500
 
 @app.route('/api/clear', methods=['POST'])
 def clear_all():

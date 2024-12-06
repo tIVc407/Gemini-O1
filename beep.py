@@ -99,6 +99,38 @@ class GeminiNetwork:
         self.mother_node: Optional[GeminiInstance] = None
         self.rate_limiter = RateLimiter(max_calls=15, period=60)
         self.instance_counter = 0
+        self.prompts = self._load_prompts()
+
+    def _load_prompts(self) -> Dict[str, str]:
+        try:
+            with open('prompts.md', 'r', encoding='utf-8') as f:
+                content = f.read()
+            
+            # Parse sections using markdown headers
+            sections = {}
+            current_section = None
+            current_content = []
+            
+            for line in content.split('\n'):
+                if line.startswith('## '):
+                    if current_section and current_content:
+                        sections[current_section] = '\n'.join(current_content).strip()
+                    current_section = line[3:].strip()
+                    current_content = []
+                else:
+                    current_content.append(line)
+                    
+            if current_section and current_content:
+                sections[current_section] = '\n'.join(current_content).strip()
+                
+            if not sections:
+                raise ValueError("No sections found in prompts.md")
+                
+            logger.info(f"Loaded {len(sections)} prompt sections: {list(sections.keys())}")
+            return sections
+        except Exception as e:
+            logger.error(f"Failed to load prompts: {e}")
+            raise ValueError(f"Failed to load prompts: {e}")
 
     def normalize_instance_id(self, identifier: str) -> str:
         """Normalize instance identifiers to a consistent format."""
@@ -106,31 +138,10 @@ class GeminiNetwork:
 
     @retry_on_exception()
     async def _initialize_mother_node(self):
-        mother_prompt = """You are the Scrum Master node. Facilitate tasks by creating specialized instances and coordinating them.
-Use the following format and do not include any extra text or formatting:
-
-ANALYZE: [task analysis]
-CREATE: [role] | [responsibility]
-TO [instance_id]: [detailed task with context]
-SYNTHESIZE
-
-Important context handling rules:
-- After initial task completion, treat all subsequent queries as follow-ups to the original task
-- Reuse existing instances for follow-up questions rather than creating new ones
-- You can request clarifications from existing instances using: TO [instance_id]: [Your question]
-- Only create new instances if a follow-up requires expertise not covered by existing team members
-
-Provide the commands exactly as specified, without bullet points, lists, or additional explanations.
-
-Example:
-ANALYZE: Need content creation and review for a marketing campaign.
-CREATE: content-specialist | Create engaging marketing content based on provided briefzzs.
-CREATE: reviewer | Review content for quality and consistency.
-TO content-specialist: Draft content focused on social media platforms, targeting young adults interested in technology.
-TO reviewer: Review the drafted content for clarity, engagement, and brand consistency.
-SYNTHESIZE
-"""
-        
+        mother_prompt = self.prompts.get('Mother Node Initialization', '')
+        if not mother_prompt:
+            raise ValueError("Mother node initialization prompt not found")
+            
         chat = self.model.start_chat()
         self.mother_node = GeminiInstance(
             name="mother_node",
@@ -373,12 +384,7 @@ SYNTHESIZE
 
     async def synthesize_with_mother_node(self, node_outputs: List[Tuple[str, str]]) -> str:
         outputs_text = "\n".join([f"{id}: {output}" for id, output in node_outputs])
-        mother_prompt = f"""
-        The following are the outputs from the nodes:
-        {outputs_text}
-
-        Please compile these outputs into a cohesive final response.
-        """
+        mother_prompt = self.prompts.get('Synthesis Prompt', '').format(outputs_text=outputs_text)
         response = await self._get_instance_response(self.mother_node, mother_prompt)
         return response
 
@@ -427,12 +433,7 @@ SYNTHESIZE
             results = await self.process_mother_node_command(mother_response)
             
             if not results['responses']:
-                direct_command = f"""
-                ANALYZE: Direct response needed for user query
-                CREATE: assistant | Provide direct and helpful responses
-                TO assistant: {user_input}
-                SYNTHESIZE
-                """
+                direct_command = self.prompts.get('Direct Command Template', '').format(user_input=user_input)
                 results = await self.process_mother_node_command(direct_command)
 
             if 'synthesized' in results['responses']:
