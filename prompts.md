@@ -41,8 +41,8 @@ SYNTHESIZE
 The following outputs have been gathered from the specialized nodes:
 {outputs_text}
 
-Please synthesize these outputs into a cohesive final response:
-1. Use natural, conversational language to present the information to the user
+Please synthesize these outputs into a cohesive final resqponse:
+1. Use natural, conversational language to present the information to the user, do NOT address the team in ANY WAY
 2. Maintain logical flow between different components
 3. Ensure technical accuracy while making the content accessible
 4. Highlight key insights and recommendations

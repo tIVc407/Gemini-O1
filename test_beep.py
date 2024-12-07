@@ -346,3 +346,27 @@ async def test_mother_node_scrum_master_role_duplicate():
     assert len(instances['instances']) > 0
     assert instances['mother_node']['role'] == 'scrum_master'
 
+import unittest
+import asyncio
+from beep import GeminiNetwork
+
+class TestGeminiNetwork(unittest.TestCase):
+    def setUp(self):
+        self.loop = asyncio.get_event_loop()
+
+    def test_mother_node_initialization(self):
+        async def test():
+            async with GeminiNetwork() as network:
+                self.assertIsNotNone(network.mother_node)
+        self.loop.run_until_complete(test())
+
+    def test_handle_user_input(self):
+        async def test():
+            async with GeminiNetwork() as network:
+                response = await network.handle_user_input('Hello')
+                self.assertIsInstance(response, str)
+        self.loop.run_until_complete(test())
+
+if __name__ == '__main__':
+    unittest.main()
+

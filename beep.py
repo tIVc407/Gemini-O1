@@ -24,15 +24,20 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class GeminiInstance:
+    # Required fields (no defaults) must come first
     name: str
     role: str
     chat: Any
+    network: 'GeminiNetwork'
+    
+    # Optional fields (with defaults) must come after
     instance_id: str = field(default_factory=lambda: str(uuid.uuid4())[:8])
     history: List[Dict[str, str]] = field(default_factory=list)
     created_at: float = field(default_factory=time.time)
     message_queue: Queue = field(default_factory=Queue)
     connected_instances: Dict[str, 'GeminiInstance'] = field(default_factory=dict)
     task_completed: bool = field(default=False)
+    outputs: List[str] = field(default_factory=list)
     
     def __post_init__(self):
         if not self.history:
@@ -40,8 +45,8 @@ class GeminiInstance:
 
     async def send_message_to(self, target_id: str, message: str) -> None:
         """Send message to another instance."""
-        if target_id in self.connected_instances:
-            await self.connected_instances[target_id].message_queue.put({
+        if target_id in self.network.instances:
+            await self.network.instances[target_id].message_queue.put({
                 'from': self.instance_id,
                 'content': message
             })
@@ -147,7 +152,8 @@ class GeminiNetwork:
             name="mother_node",
             role="scrum_master",
             chat=chat,
-            instance_id="mother"
+            instance_id="mother",
+            network=self  # Pass the network reference
         )
         
         await asyncio.sleep(4.5)
@@ -178,7 +184,8 @@ class GeminiNetwork:
             name=name,
             role=role_description,
             chat=chat,
-            instance_id=instance_id
+            instance_id=instance_id,
+            network=self  # Pass the network reference
         )
         self.instances[instance.instance_id] = instance
         return instance
@@ -206,6 +213,19 @@ class GeminiNetwork:
             context = "\n".join([f"Message from {msg['from']}: {msg['content']}" for msg in messages])
             prompt = f"Context from other instances:\n{context}\n\nTask:\n{prompt}"
         
+        if instance.outputs:
+            previous_outputs_text = "\n".join(instance.outputs)
+            prompt = f"Previous outputs:\n{previous_outputs_text}\n\nTask:\n{prompt}"
+
+        # Include outputs from other instances
+        other_outputs = []
+        for inst_id, inst in self.instances.items():
+            if inst_id != instance.instance_id and inst.outputs:
+                other_outputs.append(f"{inst_id}: {inst.outputs[-1]}")
+        if other_outputs:
+            other_outputs_text = "\n".join(other_outputs)
+            prompt = f"Outputs from other instances:\n{other_outputs_text}\n\nTask:\n{prompt}"
+
         prompt = self.validate_message(prompt)
         logger.info(f"\nInstance {instance.name} ({instance.role}) received:\n{prompt}\n")
         print(f"{instance.name} ({instance.role}): {prompt}")
@@ -221,6 +241,7 @@ class GeminiNetwork:
                 "role": instance.role,
                 "text": response_text
             })
+            instance.outputs.append(response_text)  # Add this line
             instance.task_completed = True
             return response_text
         except asyncio.TimeoutError:
@@ -233,17 +254,16 @@ class GeminiNetwork:
     async def synthesize_responses(self, responses: Dict[str, str]) -> str:
         combined = "\n".join(responses.values())
         return combined
-
+#TODO: MAKE THIS WORK
     async def connect_instances(self, instance1_id: str, instance2_id: str) -> bool:
-        if instance1_id not in self.instances or instance2_id not in self.instances:
-            return False
-            
-        inst1 = self.instances[instance1_id]
-        inst2 = self.instances[instance2_id]
-        
-        inst1.connected_instances[instance2_id] = inst2
-        inst2.connected_instances[instance1_id] = inst1
-        return True
+        # Modify to ensure all instances are connected
+        if instance1_id in self.instances and instance2_id in self.instances:
+            inst1 = self.instances[instance1_id]
+            inst2 = self.instances[instance2_id]
+            inst1.connected_instances[instance2_id] = inst2
+            inst2.connected_instances[instance1_id] = inst1
+            return True
+        return False
 
     async def verify_all_nodes_complete(self) -> bool:
         return all(instance.task_completed for instance in self.instances.values())
@@ -380,10 +400,19 @@ class GeminiNetwork:
             else:
                 i += 1
 
+        # Ensure instances are connected
+        for inst_id in self.instances:
+            for other_id in self.instances:
+                if inst_id != other_id:
+                    await self.connect_instances(inst_id, other_id)
+
         return result
 
     async def synthesize_with_mother_node(self, node_outputs: List[Tuple[str, str]]) -> str:
-        outputs_text = "\n".join([f"{id}: {output}" for id, output in node_outputs])
+        all_outputs = []
+        for instance in self.instances.values():
+            all_outputs.extend(instance.outputs)
+        outputs_text = "\n".join(all_outputs)
         mother_prompt = self.prompts.get('Synthesis Prompt', '').format(outputs_text=outputs_text)
         response = await self._get_instance_response(self.mother_node, mother_prompt)
         return response
@@ -402,7 +431,7 @@ class GeminiNetwork:
             last_response = self.mother_node.history[-1].get('text', '')
             if last_response:
                 last_context = f"\nPrevious response:\n{last_response}\n"
-
+#TODO: remove this and add to prompts.md
         mother_prompt = f"""
         User request: {user_input}
 

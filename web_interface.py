@@ -43,7 +43,7 @@ limiter = Limiter(
 )
 
 network = None
-loop = None
+loop = None  # Will be initialized in run_async_app
 background_thread = None
 is_initialized = False
 
@@ -253,7 +253,13 @@ def initialize_network():
 def run_async_app():
     global loop, network
     
-    start_background_loop()
+    # Use the new asyncio API
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    
+    background_thread = Thread(target=run_background_loop, args=(loop,))
+    background_thread.daemon = True
+    background_thread.start()
     
     try:
         initialize_network()
