@@ -258,6 +258,33 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
 
+    // Function to handle iframe interactions
+    async function handleIframeInteraction(page) {
+        try {
+            // Wait for iframe to load
+            await page.waitForSelector('iframe');
+            
+            // Get the iframe handle
+            const frameHandle = await page.$('iframe');
+            const frame = await frameHandle.contentFrame();
+            
+            // Wait for the radio button to be present in the iframe
+            await frame.waitForSelector('.answer-choice-button');
+            
+            // Get all radio buttons
+            const radioButtons = await frame.$$('.answer-choice-button');
+            
+            // Click the first radio button (or implement your selection logic)
+            if (radioButtons.length > 0) {
+                await radioButtons[0].click();
+            }
+            
+        } catch (error) {
+            console.error('Error interacting with iframe:', error);
+            showErrorToast('Failed to interact with iframe elements');
+        }
+    }
+
     // Show loading indicator during API calls
     async function sendMessage(content) {
         if (!content.trim()) return;
@@ -371,6 +398,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Periodically update instances with a longer interval (every 10 seconds instead of 5)
     setInterval(fetchInstances, 10000);
+
+    // Export the handleIframeInteraction function for external use
+    window.handleIframeInteraction = handleIframeInteraction;
 });
 
 // Functions to show/hide loading spinner

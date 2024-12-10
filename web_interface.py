@@ -75,6 +75,7 @@ async def init_network():
     global network, is_initialized
     try:
         network = GeminiNetwork()
+        # No need to pass rate_limiter, it's already shared within GeminiNetwork
         await network._initialize_mother_node()
         is_initialized = True
         logger.info("Network initialization completed successfully")

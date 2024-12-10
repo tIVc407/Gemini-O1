@@ -10,6 +10,7 @@ import logging
 from asyncio import Queue, gather
 import functools
 import google.api_core.exceptions
+from CoT_test import CoTNode
 
 logging.basicConfig(
     level=logging.INFO,
@@ -21,37 +22,6 @@ logging.basicConfig(
 )
 
 logger = logging.getLogger(__name__)
-
-@dataclass
-class GeminiInstance:
-    name: str
-    role: str
-    chat: Any
-    instance_id: str = field(default_factory=lambda: str(uuid.uuid4())[:8])
-    history: List[Dict[str, str]] = field(default_factory=list)
-    created_at: float = field(default_factory=time.time)
-    message_queue: Queue = field(default_factory=Queue)
-    connected_instances: Dict[str, 'GeminiInstance'] = field(default_factory=dict)
-    task_completed: bool = field(default=False)
-    
-    def __post_init__(self):
-        if not self.history:
-            self.history = []
-
-    async def send_message_to(self, target_id: str, message: str) -> None:
-        """Send message to another instance."""
-        if target_id in self.connected_instances:
-            await self.connected_instances[target_id].message_queue.put({
-                'from': self.instance_id,
-                'content': message
-            })
-            
-    async def receive_messages(self) -> List[Dict[str, str]]:
-        """Retrieve all pending messages."""
-        messages = []
-        while not self.message_queue.empty():
-            messages.append(await self.message_queue.get())
-        return messages
 
 class RateLimiter:
     def __init__(self, max_calls: int, period: float):
@@ -68,6 +38,44 @@ class RateLimiter:
             logger.info(f"Rate limit exceeded. Waiting {wait_time:.2f}s")
             await asyncio.sleep(wait_time)
         self.call_times.append(current_time)
+
+@dataclass
+class GeminiInstance:
+    name: str
+    role: str
+    chat: Any
+    instance_id: str = field(default_factory=lambda: str(uuid.uuid4())[:8])
+    history: List[Dict[str, str]] = field(default_factory=list)  # Fixed type annotation syntax
+    created_at: float = field(default_factory=time.time)
+    message_queue: Queue = field(default_factory=Queue)
+    connected_instances: Dict[str, 'GeminiInstance'] = field(default_factory=dict)
+    task_completed: bool = field(default=False)
+    node_type: str = field(default="normal")
+    rate_limiter: RateLimiter = None  # Add this field
+
+    def __post_init__(self):
+        if not self.history:
+            self.history = []
+
+    async def send_message_to(self, target_id: str, message: str) -> None:
+        """Send message to another instance."""
+        if target_id in self.connected_instances:
+            await self.connected_instances[target_id].message_queue.put({
+                'from': self.instance_id,
+                'content': message
+            })
+
+    async def receive_messages(self) -> List[Dict[str, str]]:
+        """Retrieve all pending messages."""
+        messages = []
+        while not self.message_queue.empty():
+            messages.append(await self.message_queue.get())
+        return messages
+
+    async def send_message(self, prompt: str) -> str:
+        await self.rate_limiter.wait()  # Use shared rate limiter
+        response = await self.chat.send_message_async(prompt)
+        return response.text
 
 def retry_on_exception(max_retries=5, initial_delay=1, backoff_factor=2, exceptions=(google.api_core.exceptions.ResourceExhausted,)):
     """Decorator to retry a coroutine upon specific exceptions with exponential backoff."""
@@ -94,7 +102,7 @@ class GeminiNetwork:
         if not self.api_key:
             raise ValueError("API key cannot be empty")
         genai.configure(api_key=self.api_key)
-        self.model = genai.GenerativeModel('gemini-1.5-flash')
+        self.model = genai.GenerativeModel('gemini-1.5-flash-002')
         self.instances: Dict[str, GeminiInstance] = {}
         self.mother_node: Optional[GeminiInstance] = None
         self.rate_limiter = RateLimiter(max_calls=15, period=60)
@@ -103,14 +111,28 @@ class GeminiNetwork:
 
     def _load_prompts(self) -> Dict[str, str]:
         try:
-            with open('prompts.md', 'r', encoding='utf-8') as f:
-                content = f.read()
+            # Look for prompts.md in the same directory as beep.py
+            script_dir = os.path.dirname(os.path.abspath(__file__))
+            prompts_path = os.path.join(script_dir, 'prompts.md')
+            logger.info(f"Looking for prompts file at: {prompts_path}")
             
+            if not os.path.exists(prompts_path):
+                # If not found in script directory, try current working directory
+                current_dir = os.getcwd()
+                prompts_path = os.path.join(current_dir, 'prompts.md')
+                logger.info(f"Alternative path: {prompts_path}")
+                
+                if not os.path.exists(prompts_path):
+                    raise FileNotFoundError(f"prompts.md not found in either {script_dir} or {current_dir}")
+            
+            with open(prompts_path, 'r', encoding='utf-8') as f:
+                content = f.read()
+
             # Parse sections using markdown headers
             sections = {}
             current_section = None
             current_content = []
-            
+
             for line in content.split('\n'):
                 if line.startswith('## '):
                     if current_section and current_content:
@@ -119,18 +141,41 @@ class GeminiNetwork:
                     current_content = []
                 else:
                     current_content.append(line)
-                    
+
             if current_section and current_content:
                 sections[current_section] = '\n'.join(current_content).strip()
-                
+
             if not sections:
                 raise ValueError("No sections found in prompts.md")
-                
+
             logger.info(f"Loaded {len(sections)} prompt sections: {list(sections.keys())}")
             return sections
         except Exception as e:
-            logger.error(f"Failed to load prompts: {e}")
-            raise ValueError(f"Failed to load prompts: {e}")
+            logger.error(f"Failed to load prompts from {prompts_path}: {e}")
+            # Provide default prompts as fallback
+            return {
+                "Mother Node Initialization": """
+You are the Scrum Master node. Facilitate tasks by creating specialized instances and coordinating them.
+
+Use the following format:
+ANALYZE: [task analysis]
+CREATE: [role] | [responsibility] | [chain/normal]
+TO [instance_id]: [detailed task]
+SYNTHESIZE
+                """,
+                "Direct Command Template": """
+ANALYZE: Direct response needed for user query
+CREATE: assistant | Provide direct and helpful responses | normal
+TO assistant: {user_input}
+SYNTHESIZE
+                """,
+                "Synthesis Prompt": """
+Synthesize these outputs into a cohesive response:
+{outputs_text}
+
+Please provide a clear, unified response that addresses the user's query.
+                """
+            }
 
     def normalize_instance_id(self, identifier: str) -> str:
         """Normalize instance identifiers to a consistent format."""
@@ -141,45 +186,73 @@ class GeminiNetwork:
         mother_prompt = self.prompts.get('Mother Node Initialization', '')
         if not mother_prompt:
             raise ValueError("Mother node initialization prompt not found")
-            
+
         chat = self.model.start_chat()
         self.mother_node = GeminiInstance(
             name="mother_node",
             role="scrum_master",
             chat=chat,
-            instance_id="mother"
+            instance_id="mother",
+            rate_limiter=self.rate_limiter  # Pass shared rate limiter
         )
-        
+
         await asyncio.sleep(4.5)
         await self.mother_node.chat.send_message_async(mother_prompt)
         print(f"Scrum Master Node initialized")
 
     async def create_instance(
-        self, 
-        role_description: str, 
-        initial_prompt: str = "", 
-        name: Optional[str] = None, 
-        instance_id: Optional[str] = None
+        self,
+        role_description: str,
+        initial_prompt: str = "",
+        name: Optional[str] = None,
+        instance_id: Optional[str] = None,
+        node_type: str = "normal"
     ) -> GeminiInstance:
         if name is None:
             name = f"instance_{len(self.instances)}"
-            
-        chat = self.model.start_chat()
-        await asyncio.sleep(4.5)
-        if initial_prompt:
-            await chat.send_message_async(initial_prompt)
-        
+
+        node_type = node_type.lower()
+        if node_type == "chain":
+            node_type = "cot"
+
+        if node_type not in ["normal", "cot"]:
+            raise ValueError("Invalid node type. Choose 'normal' or 'cot'.")
+
         if instance_id is None:
             self.instance_counter += 1
             instance_id = f"inst_{self.instance_counter}"
         instance_id = self.normalize_instance_id(instance_id)
 
-        instance = GeminiInstance(
-            name=name,
-            role=role_description,
-            chat=chat,
-            instance_id=instance_id
-        )
+        if node_type == "cot":
+            instance = CoTNode(
+                api_key=self.api_key,
+                name=name,
+                role=role_description,  # Add this argument
+                instance_id=instance_id,   # Pass instance_id
+                node_type=node_type        # Pass node_type
+            )
+            await instance.start_chat()
+            if initial_prompt:
+                try:
+                    response = await instance.process_query(initial_prompt)
+                    logger.info(f"CoT Node {instance.name} initialized with prompt: {initial_prompt}")
+                except Exception as e:
+                    logger.error(f"Error initializing CoT Node {instance.name}: {e}")
+        else:
+            chat = self.model.start_chat()
+            await asyncio.sleep(4.5)
+            if initial_prompt:
+                await chat.send_message_async(initial_prompt)
+
+            instance = GeminiInstance(
+                name=name,
+                role=role_description,
+                chat=chat,
+                instance_id=instance_id,
+                node_type=node_type,
+                rate_limiter=self.rate_limiter  # Pass shared rate limiter
+            )
+
         self.instances[instance.instance_id] = instance
         return instance
 
@@ -191,7 +264,7 @@ class GeminiNetwork:
         ]
         for instance_id in to_remove:
             del self.instances[instance_id]
-        
+
         return len(to_remove)
 
     def validate_message(self, message: str) -> str:
@@ -205,18 +278,28 @@ class GeminiNetwork:
         if messages:
             context = "\n".join([f"Message from {msg['from']}: {msg['content']}" for msg in messages])
             prompt = f"Context from other instances:\n{context}\n\nTask:\n{prompt}"
-        
+
         prompt = self.validate_message(prompt)
         logger.info(f"\nInstance {instance.name} ({instance.role}) received:\n{prompt}\n")
         print(f"{instance.name} ({instance.role}): {prompt}")
 
         await self.rate_limiter.wait()
         try:
-            response = await instance.chat.send_message_async(prompt)
-            response_text = response.text
+            if instance.node_type == "chain":
+                instance.node_type = "cot"
+
+            if instance.node_type == "cot":
+                response = await instance.process_query(prompt)
+                if 'error' in response:
+                    logger.error(f"Error processing query in CoT node {instance.name}: {response['error']}")
+                    return f"Error processing query: {response['error']}"
+                response_text = response['final_synthesis']
+            else:
+                response = await instance.chat.send_message_async(prompt)
+                response_text = response.text
             logger.info(f"Instance {instance.name} responded:\n{response_text}\n")
             print(f"{instance.name} ({instance.role}): {response_text}")
-            
+
             instance.history.append({
                 "role": instance.role,
                 "text": response_text
@@ -225,10 +308,10 @@ class GeminiNetwork:
             return response_text
         except asyncio.TimeoutError:
             logger.error(f"Timeout while waiting for instance {instance.name}")
-            return ""
+            return f"Request timed out for {instance.name}"
         except Exception as e:
             logger.error(f"Error from instance {instance.name}: {e}")
-            raise
+            return f"An error occurred in {instance.name}: {e}"
 
     async def synthesize_responses(self, responses: Dict[str, str]) -> str:
         combined = "\n".join(responses.values())
@@ -237,10 +320,10 @@ class GeminiNetwork:
     async def connect_instances(self, instance1_id: str, instance2_id: str) -> bool:
         if instance1_id not in self.instances or instance2_id not in self.instances:
             return False
-            
+
         inst1 = self.instances[instance1_id]
         inst2 = self.instances[instance2_id]
-        
+
         inst1.connected_instances[instance2_id] = inst2
         inst2.connected_instances[instance1_id] = inst1
         return True
@@ -292,25 +375,24 @@ class GeminiNetwork:
                     if next_line.startswith(('ANALYZE:', 'CREATE:', 'CONNECT:', 'MESSAGE:', 'TO ', 'SYNTHESIZE')):
                         break
                     create_lines.append(next_line)
-                    i += 1
-
-                for create_line in create_lines:
-                    if '|' in create_line:
-                        role_desc, initial_prompt = [part.strip() for part in create_line.split('|', 1)]
-                    else:
-                        role_desc = create_line.strip()
-                        initial_prompt = ""
+                    if len(parts) < 2:
+                        logger.warning(f"Invalid CREATE command format: {create_line}")
+                        continue
+                    role_desc = parts[0].strip()
+                    initial_prompt = parts[1].strip() if len(parts) > 1 else ""
+                    node_type = parts[2].strip().lower() if len(parts) > 2 else "normal"
                     instance_id = self.normalize_instance_id(role_desc)
                     new_instance = await self.create_instance(
                         role_description=role_desc,
                         initial_prompt=initial_prompt,
-                        instance_id=instance_id
+                        instance_id=instance_id,
+                        node_type=node_type
                     )
                     result["new_instances"].append({
                         "id": new_instance.instance_id,
                         "role": new_instance.role
                     })
-                    result["actions_taken"].append(f"Created new instance: {new_instance.role}")
+                    result["actions_taken"].append(f"Created new instance: {new_instance.role} ({node_type})")
                 continue
             elif line.startswith('TO '):
                 cmd = line[len('TO '):].strip()
@@ -396,7 +478,7 @@ class GeminiNetwork:
             return "Goodbye! Thank you for using the system."
 
         logger.info(f"\nUser input: {user_input}")
-        
+
         last_context = ""
         if self.mother_node.history:
             last_response = self.mother_node.history[-1].get('text', '')
@@ -410,7 +492,7 @@ class GeminiNetwork:
         As a Scrum Master, analyze and break down this request following these EXACT steps:
 
         1. ANALYZE: Provide clear task analysis
-        2. CREATE: Make specialist instances if needed (format: CREATE: role | responsibility)
+        2. CREATE: Make specialist instances if needed (format: CREATE: role | responsibility | chain/normal)
         3. TO: Assign specific tasks to instances (format: TO instance-id: detailed task)
         4. SYNTHESIZE: At the end
 
@@ -423,15 +505,15 @@ class GeminiNetwork:
         - Always delegate tasks using TO commands
         - End with SYNTHESIZE
         """
-        
+
         try:
             mother_response = await self._get_instance_response(self.mother_node, mother_prompt)
             if not mother_response:
                 logger.warning("No response from mother node. Retrying...")
                 return "Sorry, I'm unable to process your request at this time."
-                
+
             results = await self.process_mother_node_command(mother_response)
-            
+
             if not results['responses']:
                 direct_command = self.prompts.get('Direct Command Template', '').format(user_input=user_input)
                 results = await self.process_mother_node_command(direct_command)
@@ -442,7 +524,7 @@ class GeminiNetwork:
                 return "\n".join(results['responses'].values())
             else:
                 return "I apologize, but I couldn't process your request properly."
-                
+
         except Exception as e:
             logger.error(f"Error during mother node communication: {e}")
             return "Sorry, I'm unable to process your request at this time."
@@ -457,7 +539,8 @@ class GeminiNetwork:
                 {
                     "name": inst.name,
                     "role": inst.role,
-                    "id": inst.instance_id
+                    "id": inst.instance_id,
+                    "node_type": inst.node_type
                 }
                 for inst in self.instances.values()
             ]
@@ -466,12 +549,12 @@ class GeminiNetwork:
     async def __aenter__(self):
         await self._initialize_mother_node()
         return self
-    
+
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         await self.cleanup_old_instances()
 
 async def cli_main():
-    api_key = "AIzaSyACCbhYudSe-lQzqHZp_yi3KSMbka5kTG8" #Hardcoded API key as requested
+    api_key = "AIzaSyACCbhYudSe-lQzqHZp_yi3KSMbka5kTG8"
     try:
         async with GeminiNetwork() as network:
             print("Gemini CLI initialized. Type 'exit' or 'quit' to exit.")
