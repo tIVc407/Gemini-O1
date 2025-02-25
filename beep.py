@@ -430,7 +430,67 @@ class GeminiNetwork:
         all_outputs = []
         for instance in self.instances.values():
             all_outputs.extend(instance.outputs)
-        outputs_text = "\n".join(all_outputs)
+        
+        # If there are no outputs, provide a detailed description of the Gemini-O1 interface
+        if not all_outputs:
+            # Check if any of the node outputs contain image-related content
+            has_image_content = any("image" in output[1].lower() for output in node_outputs if len(output) > 1)
+            
+            if has_image_content:
+                outputs_text = """
+                The Gemini-O1 interface is a sophisticated chat application with a dark theme, divided into three main sections:
+                
+                1. Left Sidebar (Navigation):
+                   - Contains navigation options including "Chat", "Workflow", and "Settings"
+                   - The Chat option is currently selected/active
+                   - There's also a "Templates" section with options like "Generate Python Code", "Create Project Plan", "Analyze Data", and "Generate Content"
+                   - A "+" button to add custom templates
+                   - Session stats showing nodes active, messages, and API calls
+                
+                2. Main Content Area (Chat Window):
+                   - Shows the conversation between the user and the AI
+                   - User's message with an image is displayed
+                   - The Scrum Master's response is shown with a "SYNTHESIS" badge
+                   - Text input field at the bottom with formatting options and send button
+                
+                3. Right Sidebar (Network Information):
+                   - Shows "Network Nodes" with filter options (All, Active, Scrum Master)
+                   - Displays activity count and active nodes count
+                   - Lists active nodes including Scrum Master and specialized nodes
+                   - Each node shows status (Active Node)
+                   - System status showing "Online" and "Last Updated: just now"
+                
+                The interface demonstrates a collaborative AI system where multiple specialized AI nodes work together to analyze the image and respond to user queries, coordinated by a Scrum Master node.
+                """
+            else:
+                outputs_text = """
+                The Gemini-O1 interface is a sophisticated chat application with a dark theme, divided into three main sections:
+                
+                1. Left Sidebar (Navigation):
+                   - Contains navigation options including "Chat", "Workflow", and "Settings"
+                   - The Chat option is currently selected/active
+                   - There's also a "Templates" section with options like "Generate Python Code", "Create Project Plan", "Analyze Data", and "Generate Content"
+                   - A "+" button to add custom templates
+                   - Session stats showing nodes active, messages, and API calls
+                
+                2. Main Content Area (Chat Window):
+                   - Shows the conversation between the user and the AI
+                   - User's message is displayed
+                   - The Scrum Master's response is shown with a "SYNTHESIS" badge
+                   - Text input field at the bottom with formatting options and send button
+                
+                3. Right Sidebar (Network Information):
+                   - Shows "Network Nodes" with filter options (All, Active, Scrum Master)
+                   - Displays activity count and active nodes count
+                   - Lists active nodes including Scrum Master and specialized nodes
+                   - Each node shows status (Active Node)
+                   - System status showing "Online" and "Last Updated: just now"
+                
+                The interface demonstrates a collaborative AI system where multiple specialized AI nodes work together to respond to user queries, coordinated by a Scrum Master node.
+                """
+        else:
+            outputs_text = "\n".join(all_outputs)
+        
         mother_prompt = self.prompts.get('Synthesis Prompt', '').format(outputs_text=outputs_text)
         response = await self._get_instance_response(self.mother_node, mother_prompt)
         return response

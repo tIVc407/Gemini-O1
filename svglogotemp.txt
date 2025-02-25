@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 40 40">
+  <!-- Circle shape with flipped curves -->
+  <path d="
+    M 20 2
+    Q 20 14, 32 20
+    Q 20 26, 20 38
+    Q 20 26, 8 20
+    Q 20 14, 20 2
+  " fill="#F06292" />
+  
+  <!-- No inner cutout - the middle is now filled -->
+</svg>

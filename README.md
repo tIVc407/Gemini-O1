@@ -12,6 +12,10 @@ Gemini-O1 is a powerful multi-agent system that leverages Google's Gemini API to
 - **Command-based Communication**: Structured command language for agent interaction
 - **Multiple Interfaces**: CLI and Web interfaces with visualization tools
 - **Real-time Monitoring**: Track instance status, history, and network statistics
+- **Advanced Rate Limiting**: Token bucket algorithm with exponential backoff for API calls
+- **Health Monitoring**: System and API health checks with detailed status reporting
+- **Structured Logging**: JSON-formatted logs with request ID tracking across instances
+- **CI/CD Pipeline**: Automated testing, linting, and documentation generation
 
 ## Getting Started
 
@@ -38,32 +42,53 @@ Gemini-O1 is a powerful multi-agent system that leverages Google's Gemini API to
 
 ```bash
 # Interactive mode
-python beep.py interactive
+python main.py interactive
 
 # Single query mode
-python beep.py query "Write a short story about robots"
+python main.py query "Write a short story about robots"
 
 # List instances
-python beep.py list
+python main.py list
 ```
 
 #### Web Interface
 
 ```bash
 # Start the web server
-python web_interface.py
+python -m gemini_o1.ui.web_interface
 
 # Access the interface at http://localhost:5000
 ```
 
 ## Project Structure
 
-- **beep.py**: Core implementation with GeminiNetwork and GeminiInstance classes
-- **config_file.py**: Configuration settings for models, API, and rate limits
-- **utils_file.py**: Utility functions and rate limiting implementation
-- **web_interface.py**: Flask web server with REST API endpoints
-- **static/**: Web interface files (HTML, CSS, JavaScript)
-- **examples/**: Example client implementations and visualizations
+```
+gemini_o1/
+├── __init__.py         # Package initialization
+├── models/             # Core data models
+│   ├── __init__.py
+│   ├── instance.py     # GeminiInstance class
+│   └── network.py      # GeminiNetwork class
+├── commands/           # Command parsing and handling
+│   ├── __init__.py
+│   ├── command_parser.py
+│   └── command_handlers.py
+├── communication/      # Communication between instances
+│   ├── __init__.py
+│   └── response.py
+├── ui/                 # User interfaces
+│   ├── __init__.py
+│   ├── cli.py
+│   └── web_interface.py
+└── utils/              # Utility functions
+    ├── __init__.py
+    ├── config.py       # Configuration management
+    ├── health_monitor.py # Health monitoring system
+    ├── logging_config.py # Structured logging
+    ├── prompts.py      # Prompt management
+    ├── rate_limiter.py # Advanced rate limiting
+    └── retry.py        # Retry decorator with backoff
+```
 
 ## Web Interface Features
 
@@ -71,6 +96,7 @@ python web_interface.py
 - **Workflow Visualization**: See the network of instances and their connections
 - **Instance Management**: View detailed information about each instance
 - **Network Statistics**: Monitor performance metrics and usage statistics
+- **Health Dashboard**: Monitor system health and API usage metrics
 
 ## API Endpoints
 
@@ -79,6 +105,18 @@ python web_interface.py
 - **GET /api/instance/<instance_id>**: Get detailed info about a specific instance
 - **GET /api/network/stats**: Get comprehensive network statistics
 - **POST /api/clear**: Clear all instances and history
+- **GET /api/health**: Get basic health status of the system
+- **GET /api/health/detailed**: Get detailed health information including metrics
+- **GET /api/metrics**: Get performance metrics for API calls and system resources
+- **GET /api/health/check/<check_name>**: Run a specific health check
+
+## CI/CD Pipeline
+
+The project includes GitHub Actions workflows for:
+
+- **Continuous Integration**: Runs tests, linting, and code coverage on multiple Python versions
+- **Documentation**: Automatically generates and publishes API documentation
+- **Continuous Deployment**: Creates releases with versioned packages
 
 ## Examples
 

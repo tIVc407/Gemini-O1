@@ -23,6 +23,11 @@ document.addEventListener('DOMContentLoaded', () => {
     const messagesCountElement = document.getElementById('messages-count');
     const apiCallsElement = document.getElementById('api-calls');
     const lastUpdatedElement = document.getElementById('last-updated');
+    const uploadFileBtn = document.getElementById('upload-file-btn');
+    const fileUploadInput = document.getElementById('file-upload');
+    
+    // File upload variables
+    let currentUploadedFile = null;
 
     // Configure marked options
     marked.setOptions({
@@ -138,6 +143,17 @@ document.addEventListener('DOMContentLoaded', () => {
         const icon = message.icon || '🤖';
         const role = message.role.charAt(0).toUpperCase() + message.role.slice(1).replace(/-/g, ' ');
         const bgColor = message.role === 'assistant' ? '#5865f2' : '#23a559';
+        const type = message.type || 'normal';
+        
+        // Add status indicator based on message type
+        let statusIndicator = '';
+        if (type === 'planning') {
+            statusIndicator = '<span class="status-badge planning">Planning</span>';
+        } else if (type === 'specialist') {
+            statusIndicator = '<span class="status-badge specialist">Specialist</span>';
+        } else if (type === 'synthesis') {
+            statusIndicator = '<span class="status-badge synthesis">Synthesis</span>';
+        }
 
         const content = markdownToHtml(message.content);
 
@@ -149,6 +165,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 <div class="message-main">
                     <div class="message-header">
                         <span class="message-author">${role}</span>
+                        ${statusIndicator}
                         <span class="message-timestamp">Today at ${timestamp}</span>
                     </div>
                     <div class="message-text markdown">${content}</div>
@@ -785,6 +802,260 @@ document.addEventListener('DOMContentLoaded', () => {
                 showToast('Failed to copy link', 'error');
             });
     });
+    
+    // File upload button click handler
+    uploadFileBtn.addEventListener('click', () => {
+        fileUploadInput.click();
+    });
+    
+    // File input change handler
+    fileUploadInput.addEventListener('change', async (e) => {
+        if (e.target.files.length > 0) {
+            const file = e.target.files[0];
+            
+            // Check file type
+            const validTypes = ['image/png', 'image/jpeg', 'image/jpg', 'image/gif'];
+            if (!validTypes.includes(file.type)) {
+                showErrorToast('Invalid file type. Please upload a PNG, JPG, or GIF image.');
+                return;
+            }
+            
+            // Check file size (max 16MB)
+            if (file.size > 16 * 1024 * 1024) {
+                showErrorToast('File too large. Maximum size is 16MB.');
+                return;
+            }
+            
+            // Show loading spinner
+            showLoadingSpinner();
+            
+            // Create FormData object
+            const formData = new FormData();
+            formData.append('file', file);
+            
+            try {
+                // Upload file
+                const response = await fetch('/api/upload', {
+                    method: 'POST',
+                    body: formData
+                });
+                
+                if (!response.ok) {
+                    const data = await response.json();
+                    throw new Error(data.error || 'Failed to upload file');
+                }
+                
+                const data = await response.json();
+                
+                // Store uploaded file info
+                currentUploadedFile = {
+                    url: data.url,
+                    filename: data.filename
+                };
+                
+                // Show success message
+                showToast(`File uploaded successfully: ${file.name}`, 'success');
+                
+                // Add image preview to message input
+                const previewDiv = document.createElement('div');
+                previewDiv.className = 'image-preview';
+                previewDiv.innerHTML = `
+                    <img src="${data.url}" alt="Uploaded image">
+                    <span class="image-filename">${file.name}</span>
+                    <button class="remove-image"><i class="fas fa-times"></i></button>
+                `;
+                
+                // Add preview before the message input
+                const messageInputContainer = document.querySelector('.message-input');
+                messageInputContainer.parentNode.insertBefore(previewDiv, messageInputContainer);
+                
+                // Add event listener to remove button
+                previewDiv.querySelector('.remove-image').addEventListener('click', () => {
+                    previewDiv.remove();
+                    currentUploadedFile = null;
+                });
+                
+            } catch (error) {
+                console.error('Error uploading file:', error);
+                showErrorToast(error.message || 'Failed to upload file');
+            } finally {
+                hideLoadingSpinner();
+            }
+        }
+    });
+    
+    // Drag and drop functionality
+    const dropArea = document.querySelector('.chat-area');
+    
+    ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
+        dropArea.addEventListener(eventName, (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+        });
+    });
+    
+    dropArea.addEventListener('dragenter', () => {
+        dropArea.classList.add('drag-active');
+    });
+    
+    dropArea.addEventListener('dragleave', () => {
+        dropArea.classList.remove('drag-active');
+    });
+    
+    dropArea.addEventListener('drop', async (e) => {
+        dropArea.classList.remove('drag-active');
+        
+        if (e.dataTransfer.files.length > 0) {
+            const file = e.dataTransfer.files[0];
+            
+            // Check file type
+            const validTypes = ['image/png', 'image/jpeg', 'image/jpg', 'image/gif'];
+            if (!validTypes.includes(file.type)) {
+                showErrorToast('Invalid file type. Please upload a PNG, JPG, or GIF image.');
+                return;
+            }
+            
+            // Check file size (max 16MB)
+            if (file.size > 16 * 1024 * 1024) {
+                showErrorToast('File too large. Maximum size is 16MB.');
+                return;
+            }
+            
+            // Show loading spinner
+            showLoadingSpinner();
+            
+            // Create FormData object
+            const formData = new FormData();
+            formData.append('file', file);
+            
+            try {
+                // Upload file
+                const response = await fetch('/api/upload', {
+                    method: 'POST',
+                    body: formData
+                });
+                
+                if (!response.ok) {
+                    const data = await response.json();
+                    throw new Error(data.error || 'Failed to upload file');
+                }
+                
+                const data = await response.json();
+                
+                // Store uploaded file info
+                currentUploadedFile = {
+                    url: data.url,
+                    filename: data.filename
+                };
+                
+                // Show success message
+                showToast(`File uploaded successfully: ${file.name}`, 'success');
+                
+                // Add image preview to message input
+                const previewDiv = document.createElement('div');
+                previewDiv.className = 'image-preview';
+                previewDiv.innerHTML = `
+                    <img src="${data.url}" alt="Uploaded image">
+                    <span class="image-filename">${file.name}</span>
+                    <button class="remove-image"><i class="fas fa-times"></i></button>
+                `;
+                
+                // Add preview before the message input
+                const messageInputContainer = document.querySelector('.message-input');
+                messageInputContainer.parentNode.insertBefore(previewDiv, messageInputContainer);
+                
+                // Add event listener to remove button
+                previewDiv.querySelector('.remove-image').addEventListener('click', () => {
+                    previewDiv.remove();
+                    currentUploadedFile = null;
+                });
+                
+            } catch (error) {
+                console.error('Error uploading file:', error);
+                showErrorToast(error.message || 'Failed to upload file');
+            } finally {
+                hideLoadingSpinner();
+            }
+        }
+    });
+    
+    // Modify sendMessage function to include image if available
+    async function sendMessage(content) {
+        if (!content.trim() && !currentUploadedFile) return;
+
+        showLoadingSpinner();
+        
+        const userMessageElement = createMessageElement({
+            role: 'user',
+            content: content
+        });
+        addMessageWithAnimation(userMessageElement, { role: 'user', content: content });
+
+        try {
+            const requestBody = {
+                message: content
+            };
+            
+            // Add image info if available
+            if (currentUploadedFile) {
+                requestBody.image_attached = true;
+            }
+            
+            const response = await fetch('/api/send_message', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify(requestBody)
+            });
+
+            const data = await response.json();
+            
+            if (!response.ok) {
+                // Handle specific error status codes
+                if (response.status === 503) {
+                    showErrorToast('System is still initializing. Please wait a moment...');
+                } else if (response.status === 504) {
+                    showErrorToast('Request timed out. Please try again.');
+                } else {
+                    showErrorToast(data.error || 'Failed to process message');
+                }
+                
+                // Add error message to chat
+                const errorElement = createMessageElement({
+                    error: data.error || 'Failed to process message'
+                });
+                addMessageWithAnimation(errorElement, { error: data.error });
+                return;
+            }
+
+            if (data.responses) {
+                await addResponsesSequentially(data.responses);
+            }
+
+            if (data.instances) {
+                updateInstances(data.instances);
+            }
+            
+            // Clear image preview if exists
+            const imagePreview = document.querySelector('.image-preview');
+            if (imagePreview) {
+                imagePreview.remove();
+                currentUploadedFile = null;
+            }
+
+        } catch (error) {
+            console.error('Error sending message:', error);
+            showErrorToast('Network error. Please check your connection.');
+            
+            const errorElement = createMessageElement({
+                error: 'Network error. Please check your connection.'
+            });
+            addMessageWithAnimation(errorElement, { error: 'Network error' });
+        } finally {
+            hideLoadingSpinner();
+        }
+    }
     
     // Handle clear button click
     clearButton.addEventListener('click', clearAll);

@@ -1,6 +1,6 @@
 import logging
 import sys
-from flask import Flask, send_from_directory, jsonify, request
+from flask import Flask, send_from_directory, jsonify, request, url_for
 from flask_cors import CORS
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
@@ -11,8 +11,10 @@ import threading
 import json
 import markdown2
 import time
+import uuid
 from functools import partial
 from threading import Thread
+from werkzeug.utils import secure_filename
 from config_file import RATE_LIMIT
 
 logging.getLogger('werkzeug').setLevel(logging.WARNING)
@@ -31,11 +33,20 @@ logger = logging.getLogger(__name__)
 
 # Force UTF-8 encoding for stdout
 if sys.stdout.encoding != 'utf-8':
-    sys.stdout.reconfigure(encoding='utf-8')
+    sys.stdout.reconfigure(encoding='utf-8')    
 
 # Initialize Flask app first
 app = Flask(__name__, static_folder='static', static_url_path='')
 CORS(app)
+
+# Configure file upload settings
+UPLOAD_FOLDER = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'uploads')
+ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg', 'gif'}
+app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
+app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB max upload size
+
+# Create upload folder if it doesn't exist
+os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
 # Initialize rate limiter after Flask app
 limiter = Limiter(
@@ -48,6 +59,7 @@ network = None
 loop = None  # Will be initialized in run_async_app
 background_thread = None
 is_initialized = False
+current_upload = None  # Store the current uploaded image for sharing with nodes
 
 # Node icon mapping
 NODE_ICONS = {
@@ -107,6 +119,10 @@ def get_node_icon(role):
     normalized_role = role.lower().replace(' ', '-')
     return NODE_ICONS.get(normalized_role, '🔵')
 
+def allowed_file(filename):
+    """Check if the file extension is allowed."""
+    return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
+
 def format_instance_response(instance_id, response, role):
     """Format a single instance response with name, icon, and markdown-converted text."""
     icon = get_node_icon(role)
@@ -122,6 +138,49 @@ def format_instance_response(instance_id, response, role):
 @app.route('/')
 def index():
     return send_from_directory('static', 'index.html')
+
+@app.route('/uploads/<filename>')
+def uploaded_file(filename):
+    """Serve uploaded files."""
+    return send_from_directory(app.config['UPLOAD_FOLDER'], filename)
+
+@app.route('/api/upload', methods=['POST'])
+@limiter.limit("20 per minute")
+def upload_file():
+    """Handle file uploads."""
+    global current_upload
+    
+    if 'file' not in request.files:
+        return jsonify({'error': 'No file part'}), 400
+        
+    file = request.files['file']
+    
+    if file.filename == '':
+        return jsonify({'error': 'No selected file'}), 400
+        
+    if file and allowed_file(file.filename):
+        # Create a unique filename to prevent overwriting
+        filename = secure_filename(file.filename)
+        unique_filename = f"{uuid.uuid4()}_{filename}"
+        filepath = os.path.join(app.config['UPLOAD_FOLDER'], unique_filename)
+        
+        file.save(filepath)
+        
+        # Store the current upload information
+        current_upload = {
+            'filename': unique_filename,
+            'filepath': filepath,
+            'url': url_for('uploaded_file', filename=unique_filename, _external=True)
+        }
+        
+        logger.info(f"File uploaded successfully: {unique_filename}")
+        return jsonify({
+            'success': True,
+            'filename': unique_filename,
+            'url': current_upload['url']
+        })
+    
+    return jsonify({'error': 'File type not allowed'}), 400
 
 @app.route('/api/instances', methods=['GET'])
 @limiter.limit("300 per minute")
@@ -192,10 +251,56 @@ def get_instances():
         logger.error(f"Error listing instances: {str(e)}")
         return jsonify({'error': 'Failed to list instances'}), 500
 
+async def share_image_with_instances(message, image_url=None):
+    """Send the uploaded image to all instances."""
+    if not network or not current_upload:
+        return
+
+    try:
+        # Create a message with the image URL for all instances
+        image_message = f"{message}\n\n[Image: {current_upload['url']}]"
+        
+        # Add a description of the image for AI instances
+        image_description = "This is a screenshot of the Gemini-O1 interface. It shows a chat interface with a dark theme. " + \
+                           "The left sidebar contains navigation options like Chat, Workflow, and Settings. " + \
+                           "The main content area shows messages between a user and the AI. " + \
+                           "The right sidebar shows information about active nodes in the network."
+        
+        enhanced_message = f"{image_message}\n\nImage description: {image_description}"
+        
+        # Share with mother node
+        if network.mother_node:
+            # Use the correct method to add a message to the mother node
+            network.mother_node.history.append({"role": "user", "text": enhanced_message})
+        
+        # Share with all specialist nodes
+        for instance_id, instance in network.instances.items():
+            if instance:
+                # Use the correct method to add a message to specialist nodes
+                instance.history.append({"role": "user", "text": enhanced_message})
+                
+                # Reset task_completed flag to ensure the node processes the new image
+                instance.task_completed = False
+                
+                # Clear previous outputs related to image requests
+                if instance.outputs:
+                    # Remove any outputs asking for images
+                    instance.outputs = [
+                        output for output in instance.outputs 
+                        if not any(phrase in output.lower() for phrase in [
+                            "provide the image", "need the image", "need to see the image",
+                            "provide the screenshot", "need the screenshot", "need to see the screenshot"
+                        ])
+                    ]
+                
+        logger.info(f"Shared image with all instances: {current_upload['filename']}")
+    except Exception as e:
+        logger.error(f"Error sharing image: {str(e)}")
+
 @app.route('/api/send_message', methods=['POST'])
 @limiter.limit("5 per minute")
 def send_message():
-    global network, is_initialized
+    global network, is_initialized, current_upload
     
     if not is_initialized or not network:
         logger.error("Attempted to send message before network initialization")
@@ -207,24 +312,58 @@ def send_message():
             return jsonify({'error': 'No data provided'}), 400
 
         user_message = data.get('message', '').strip()
-        logger.info(f"Received message: {user_message}")
+        image_attached = data.get('image_attached', False)
         
-        # Get responses asynchronously
-        future = asyncio.run_coroutine_threadsafe(
-            network.handle_user_input(user_message),
-            loop
-        )
+        logger.info(f"Received message: {user_message} (image attached: {image_attached})")
+        
+        # If the image was attached in this message (or an earlier one that hasn't been processed)
+        # and we have a current_upload, we'll share the image with all instances
+        if image_attached and current_upload:
+            future_share = asyncio.run_coroutine_threadsafe(
+                share_image_with_instances(user_message),
+                loop
+            )
+            # Wait for image sharing to complete
+            future_share.result()
+            
+            # After sharing, we'll use the message with the image URL for processing
+            image_message = f"{user_message}\n\n[Image: {current_upload['url']}]"
+            
+            # Get responses asynchronously for a message with image
+            future = asyncio.run_coroutine_threadsafe(
+                network.handle_user_input(image_message),
+                loop
+            )
+        else:
+            # Regular message processing without image
+            future = asyncio.run_coroutine_threadsafe(
+                network.handle_user_input(user_message),
+                loop
+            )
         
         responses = []
         
-        # 1. Add mother node's planning response
+        # We'll collect the planning response but not add it to the responses array
+        # This is for debugging purposes only
+        planning_response = ''
         if network.mother_node and network.mother_node.history:
-            responses.append({
-                'role': 'scrum_master',
-                'content': network.mother_node.history[-2]['text'] if len(network.mother_node.history) >= 2 else '',
-                'icon': get_node_icon('scrum_master'),
-                'type': 'planning'
-            })
+            # Get the planning response (the first response after user input)
+            planning_response = network.mother_node.history[-2]['text'] if len(network.mother_node.history) >= 2 else ''
+            # Log the planning response but don't add it to the responses array
+            if planning_response:
+                logger.info(f"scrum_master (planning): {planning_response}")
+        
+        # Wait for all specialist nodes to complete their tasks
+        # This ensures we don't synthesize before all nodes have responded
+        all_specialists_complete = False
+        max_wait_time = 30  # Maximum wait time in seconds
+        wait_start = time.time()
+        
+        while not all_specialists_complete and (time.time() - wait_start) < max_wait_time:
+            all_specialists_complete = all(instance.task_completed for instance in network.instances.values())
+            if not all_specialists_complete:
+                # Wait a bit before checking again
+                time.sleep(0.5)
         
         # 2. Add all specialist node responses in order
         for instance_id, instance in network.instances.items():
@@ -238,20 +377,71 @@ def send_message():
                 })
         
         # 3. Get and add mother node's final synthesis
-        final_response = future.result()
-        if final_response:
+        # Only proceed with synthesis after all specialists have completed
+        if all_specialists_complete:
+            final_response = future.result()
+            if final_response:
+                # Filter out any planning messages (ANALYZE, TO, SYNTHESIZE commands)
+                # Only keep the actual synthesis content
+                if "ANALYZE:" in final_response and "SYNTHESIZE" in final_response:
+                    # This is a planning message, we need to create a more meaningful synthesis
+                    # based on the specialist responses
+                    
+                    # Collect all specialist responses
+                    specialist_insights = []
+                    for instance_id, instance in network.instances.items():
+                        if instance and instance.outputs:
+                            specialist_insights.append(instance.outputs[-1])
+                    
+                    if specialist_insights:
+                        # Create a synthesis based on specialist responses
+                        synthesis = "Based on the analysis of the provided information:\n\n"
+                        for insight in specialist_insights:
+                            # Clean up the insight to remove any "please provide the image" type messages
+                            if not any(phrase in insight.lower() for phrase in [
+                                "provide the image", "need the image", "need to see the image",
+                                "provide the screenshot", "need the screenshot", "need to see the screenshot"
+                            ]):
+                                synthesis += f"- {insight}\n\n"
+                        
+                        if len(synthesis) > len("Based on the analysis of the provided information:\n\n"):
+                            final_response = synthesis
+                        else:
+                            # If we couldn't extract meaningful content from specialist responses,
+                            # provide a more helpful message
+                            final_response = "I need more information to provide a complete analysis. Please provide the requested details or images so I can better assist you."
+                    else:
+                        # If there are no specialist insights, provide a more helpful message
+                        final_response = "I need more information to provide a complete analysis. Please provide the requested details or images so I can better assist you."
+                
+                responses.append({
+                    'role': 'scrum_master',
+                    'content': final_response,
+                    'icon': get_node_icon('scrum_master'),
+                    'type': 'synthesis'
+                })
+        else:
+            # If we timed out waiting for specialists, add a message indicating this
             responses.append({
                 'role': 'scrum_master',
-                'content': final_response,
+                'content': "I'm still processing your request. Some specialist nodes are still working on their analysis.",
                 'icon': get_node_icon('scrum_master'),
                 'type': 'synthesis'
             })
+        
+        # Include image information in response if applicable
+        result = {'responses': responses}
+        if image_attached and current_upload:
+            result['image'] = {
+                'url': current_upload['url'],
+                'filename': current_upload['filename']
+            }
 
         # Log full conversation flow
         for response in responses:
             logger.info(f"{response['role']} ({response['type']}): {response['content']}")
 
-        return jsonify({'responses': responses})
+        return jsonify(result)
 
     except Exception as e:
         logger.error("Error processing message: %r", e, exc_info=True)
@@ -259,6 +449,8 @@ def send_message():
 
 @app.route('/api/clear', methods=['POST'])
 def clear_all():
+    global current_upload
+    
     if not network:
         return jsonify({'error': 'Network not initialized'}), 503
     try:
@@ -268,6 +460,9 @@ def clear_all():
         
         # Clear all instances
         network.instances = {}
+        
+        # Clear current image upload
+        current_upload = None
         
         return jsonify({'success': True})
     except Exception as e:

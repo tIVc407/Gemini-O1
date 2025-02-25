@@ -42,15 +42,23 @@ TO assistant: {user_input}
 SYNTHESIZE
 
 ## Synthesis Prompt
-The following outputs have been gathered from the specialized nodes:
-{outputs_text}
+Based on the image provided, analyze what is shown in the screenshot.
 
-Please synthesize these outputs into a cohesive final resqponse:
+For image analysis tasks, focus on:
+1. Describing the user interface elements visible in the screenshot
+2. Explaining the functionality of each component
+3. Identifying any text, buttons, or interactive elements
+4. Noting the overall layout and design
+5. Explaining what activities or processes are being shown
+
+For other specialized tasks, analyze the information available and provide insights based on your expertise.
+
+Please synthesize your analysis into a cohesive final response:
 1. Use natural, conversational language to present the information to the user, do NOT address the team in ANY WAY
 2. Maintain logical flow between different components
 3. Ensure technical accuracy while making the content accessible
 4. Highlight key insights and recommendations
-5. Address any conflicts or contradictions between node outputs
+5. Address any conflicts or contradictions in your analysis
 6. Summarize next steps or action items if applicable
 7. Keep the tone professional but friendly
 
