@@ -1,8 +1,28 @@
 document.addEventListener('DOMContentLoaded', () => {
+    // DOM Elements
     const messagesContainer = document.querySelector('.messages');
-    const messageInput = document.querySelector('.message-input input');
+    const messageInput = document.querySelector('.message-input textarea');
+    const sendButton = document.querySelector('.send-button');
     const instancesContainer = document.querySelector('.online-users');
-    const clearButton = document.querySelector('.nav-icons .icon.clear');
+    const clearButton = document.querySelector('.icon-btn.clear');
+    const menuToggle = document.querySelector('.menu-toggle');
+    const appContainer = document.querySelector('.app-container');
+    const themeToggle = document.querySelector('.theme-toggle');
+    const modeBtns = document.querySelectorAll('.mode-btn');
+    const workflowDiagram = document.querySelector('.workflow-diagram');
+    const chatArea = document.querySelector('.messages');
+    const quickPrompts = document.querySelectorAll('.prompt-chip');
+    const nodeFilters = document.querySelectorAll('.node-filter');
+    const refreshNodesBtn = document.querySelector('.refresh-nodes');
+    const formatButtons = document.querySelectorAll('.formatting-toolbar button');
+    const settingsModal = document.getElementById('settings-modal');
+    const closeModalBtn = document.querySelector('.close-modal');
+    const exportBtn = document.querySelector('[title="Export Conversation"]');
+    const shareBtn = document.querySelector('[title="Share Conversation"]');
+    const nodesCountElement = document.getElementById('nodes-count');
+    const messagesCountElement = document.getElementById('messages-count');
+    const apiCallsElement = document.getElementById('api-calls');
+    const lastUpdatedElement = document.getElementById('last-updated');
 
     // Configure marked options
     marked.setOptions({
@@ -209,10 +229,213 @@ document.addEventListener('DOMContentLoaded', () => {
             }
             const data = await response.json();
             updateInstances(data);
+            
+            // Update session stats if available
+            if (data.stats) {
+                nodesCountElement.textContent = data.stats.total_instances;
+                messagesCountElement.textContent = data.stats.total_messages;
+                apiCallsElement.textContent = data.stats.api_usage ? data.stats.api_usage.total_calls : '0';
+                
+                // Update last updated time
+                updateLastUpdated();
+            }
+            
+            // If we're in workflow mode, update the network visualization
+            const workflowActive = document.querySelector('.workflow-diagram').style.display !== 'none';
+            if (workflowActive) {
+                updateWorkflowVisualization(data);
+            }
         } catch (error) {
             console.error('Error fetching instances:', error);
             showErrorToast(error.message);
         }
+    }
+    
+    // Function to fetch detailed network stats
+    async function fetchNetworkStats() {
+        try {
+            const response = await fetch('/api/network/stats');
+            if (!response.ok) {
+                throw new Error('Failed to fetch network statistics');
+            }
+            const data = await response.json();
+            return data;
+        } catch (error) {
+            console.error('Error fetching network stats:', error);
+            return null;
+        }
+    }
+    
+    // Function to update the workflow visualization
+    function updateWorkflowVisualization(instancesData) {
+        const workflowDiagram = document.querySelector('.workflow-diagram');
+        
+        // Clear previous visualization
+        if (workflowDiagram.querySelector('svg')) {
+            workflowDiagram.querySelector('svg').remove();
+        }
+        
+        // Remove placeholder if it exists
+        const placeholder = workflowDiagram.querySelector('.diagram-placeholder');
+        if (placeholder) {
+            placeholder.style.display = 'none';
+        }
+        
+        // Width and height of the diagram
+        const width = workflowDiagram.clientWidth;
+        const height = workflowDiagram.clientHeight || 500;
+        
+        // Create SVG
+        const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+        svg.setAttribute('width', width);
+        svg.setAttribute('height', height);
+        svg.setAttribute('class', 'network-graph');
+        workflowDiagram.appendChild(svg);
+        
+        // Prepare nodes and links
+        const nodes = [];
+        const links = [];
+        
+        // Add mother node
+        if (instancesData.mother_node) {
+            nodes.push({
+                id: instancesData.mother_node.id,
+                name: 'Scrum Master',
+                role: instancesData.mother_node.role,
+                icon: instancesData.mother_node.icon || '👨‍💼',
+                color: '#8942C1',
+                radius: 30
+            });
+        }
+        
+        // Add instances
+        if (instancesData.instances) {
+            instancesData.instances.forEach(instance => {
+                nodes.push({
+                    id: instance.id,
+                    name: instance.role,
+                    role: instance.role,
+                    icon: instance.icon || '🤖',
+                    color: '#5865f2',
+                    radius: 25
+                });
+            });
+        }
+        
+        // Create links based on connected_to property
+        if (instancesData.mother_node && instancesData.mother_node.connected_to) {
+            instancesData.mother_node.connected_to.forEach(targetId => {
+                links.push({
+                    source: instancesData.mother_node.id,
+                    target: targetId
+                });
+            });
+        }
+        
+        if (instancesData.instances) {
+            instancesData.instances.forEach(instance => {
+                if (instance.connected_to) {
+                    instance.connected_to.forEach(targetId => {
+                        // Avoid duplicate links
+                        const isDuplicate = links.some(link => 
+                            (link.source === instance.id && link.target === targetId) || 
+                            (link.source === targetId && link.target === instance.id)
+                        );
+                        
+                        if (!isDuplicate) {
+                            links.push({
+                                source: instance.id,
+                                target: targetId
+                            });
+                        }
+                    });
+                }
+            });
+        }
+        
+        // Only proceed if we have nodes
+        if (nodes.length === 0) return;
+        
+        // Create D3 force simulation
+        const simulation = d3.forceSimulation(nodes)
+            .force('link', d3.forceLink(links).id(d => d.id).distance(100))
+            .force('charge', d3.forceManyBody().strength(-500))
+            .force('center', d3.forceCenter(width / 2, height / 2))
+            .force('collision', d3.forceCollide().radius(d => d.radius + 10));
+        
+        // Create the links
+        const link = d3.select(svg)
+            .selectAll('line')
+            .data(links)
+            .enter()
+            .append('line')
+            .attr('stroke', '#555')
+            .attr('stroke-width', 2)
+            .attr('stroke-opacity', 0.6);
+        
+        // Create the nodes
+        const node = d3.select(svg)
+            .selectAll('.node')
+            .data(nodes)
+            .enter()
+            .append('g')
+            .attr('class', 'node')
+            .call(d3.drag()
+                .on('start', dragstarted)
+                .on('drag', dragged)
+                .on('end', dragended));
+        
+        // Add circles for nodes
+        node.append('circle')
+            .attr('r', d => d.radius)
+            .attr('fill', d => d.color)
+            .attr('stroke', '#222')
+            .attr('stroke-width', 2);
+        
+        // Add icons to nodes
+        node.append('text')
+            .attr('text-anchor', 'middle')
+            .attr('dominant-baseline', 'central')
+            .attr('fill', 'white')
+            .attr('font-size', '20px')
+            .text(d => d.icon);
+        
+        // Add labels below nodes
+        node.append('text')
+            .attr('text-anchor', 'middle')
+            .attr('y', d => d.radius + 15)
+            .attr('fill', 'white')
+            .attr('font-size', '12px')
+            .text(d => d.name);
+        
+        // Animation functions for drag
+        function dragstarted(event, d) {
+            if (!event.active) simulation.alphaTarget(0.3).restart();
+            d.fx = d.x;
+            d.fy = d.y;
+        }
+        
+        function dragged(event, d) {
+            d.fx = event.x;
+            d.fy = event.y;
+        }
+        
+        function dragended(event, d) {
+            if (!event.active) simulation.alphaTarget(0);
+            d.fx = null;
+            d.fy = null;
+        }
+        
+        // Update positions on each tick of the simulation
+        simulation.on('tick', () => {
+            link
+                .attr('x1', d => d.source.x)
+                .attr('y1', d => d.source.y)
+                .attr('x2', d => d.target.x)
+                .attr('y2', d => d.target.y);
+            
+            node.attr('transform', d => `translate(${d.x},${d.y})`);
+        });
     }
 
     // Function to scroll messages into view
@@ -344,33 +567,255 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
 
-    // Handle message input
-    messageInput.addEventListener('keydown', async (e) => {
-        if (e.key === 'Enter' && !e.shiftKey) {
-            e.preventDefault();
-            const content = messageInput.value;
-            messageInput.value = '';
-            await sendMessage(content);
-        }
-    });
-
-    // Implement typing indicator
-    let typingTimeout;
+    // Event Handlers
+    
+    // Auto-resize textarea as user types
     messageInput.addEventListener('input', () => {
+        messageInput.style.height = 'auto';
+        messageInput.style.height = Math.min(messageInput.scrollHeight, 150) + 'px';
+        
+        // Typing indicator
         fetch('/api/typing', { method: 'POST' });
         showTypingIndicator();
         clearTimeout(typingTimeout);
         typingTimeout = setTimeout(hideTypingIndicator, 2000);
     });
-
+    
+    // Handle message input
+    messageInput.addEventListener('keydown', async (e) => {
+        if (e.key === 'Enter' && !e.shiftKey) {
+            e.preventDefault();
+            const content = messageInput.value.trim();
+            if (content) {
+                messageInput.value = '';
+                messageInput.style.height = 'auto';
+                await sendMessage(content);
+                
+                // Update stats
+                let messageCount = parseInt(messagesCountElement.textContent) || 0;
+                messagesCountElement.textContent = messageCount + 1;
+            }
+        }
+    });
+    
+    // Send button click handler
+    sendButton.addEventListener('click', async () => {
+        const content = messageInput.value.trim();
+        if (content) {
+            messageInput.value = '';
+            messageInput.style.height = 'auto';
+            await sendMessage(content);
+            
+            // Update stats
+            let messageCount = parseInt(messagesCountElement.textContent) || 0;
+            messagesCountElement.textContent = messageCount + 1;
+        }
+    });
+    
+    // Toggle left sidebar
+    menuToggle.addEventListener('click', () => {
+        appContainer.classList.toggle('sidebar-collapsed');
+    });
+    
+    // Toggle theme
+    themeToggle.addEventListener('click', () => {
+        document.body.classList.toggle('light-theme');
+        
+        if (document.body.classList.contains('light-theme')) {
+            themeToggle.innerHTML = '<i class="fas fa-sun"></i>';
+        } else {
+            themeToggle.innerHTML = '<i class="fas fa-moon"></i>';
+        }
+    });
+    
+    // Mode switching
+    modeBtns.forEach(btn => {
+        btn.addEventListener('click', () => {
+            // Remove active class from all mode buttons
+            modeBtns.forEach(b => b.classList.remove('active'));
+            
+            // Add active class to clicked button
+            btn.classList.add('active');
+            
+            const mode = btn.dataset.mode;
+            
+            if (mode === 'workflow') {
+                workflowDiagram.style.display = 'flex';
+                chatArea.style.display = 'none';
+            } else if (mode === 'chat') {
+                workflowDiagram.style.display = 'none';
+                chatArea.style.display = 'flex';
+            } else if (mode === 'settings') {
+                settingsModal.classList.add('active');
+            }
+        });
+    });
+    
+    // Quick prompts
+    quickPrompts.forEach(chip => {
+        chip.addEventListener('click', () => {
+            messageInput.value = chip.textContent;
+            messageInput.focus();
+        });
+    });
+    
+    // Node filters
+    nodeFilters.forEach(filter => {
+        filter.addEventListener('click', () => {
+            // Remove active class from all filters
+            nodeFilters.forEach(f => f.classList.remove('active'));
+            
+            // Add active class to clicked filter
+            filter.classList.add('active');
+            
+            const filterType = filter.dataset.filter;
+            const nodes = document.querySelectorAll('.user');
+            
+            nodes.forEach(node => {
+                if (filterType === 'all') {
+                    node.style.display = 'flex';
+                } else if (filterType === 'master' && node.querySelector('.user-name').textContent.includes('Scrum Master')) {
+                    node.style.display = 'flex';
+                } else if (filterType === 'active' && node.querySelector('.user-status').textContent.includes('Active')) {
+                    node.style.display = 'flex';
+                } else {
+                    node.style.display = 'none';
+                }
+            });
+        });
+    });
+    
+    // Refresh nodes button
+    refreshNodesBtn.addEventListener('click', async () => {
+        refreshNodesBtn.classList.add('loading');
+        await fetchInstances();
+        setTimeout(() => {
+            refreshNodesBtn.classList.remove('loading');
+        }, 500);
+    });
+    
+    // Formatting buttons
+    formatButtons.forEach(button => {
+        button.addEventListener('click', () => {
+            const formatType = button.title.toLowerCase();
+            const selectionStart = messageInput.selectionStart;
+            const selectionEnd = messageInput.selectionEnd;
+            const selectedText = messageInput.value.substring(selectionStart, selectionEnd);
+            
+            let formattedText = '';
+            
+            switch (formatType) {
+                case 'bold':
+                    formattedText = `**${selectedText}**`;
+                    break;
+                case 'italic':
+                    formattedText = `*${selectedText}*`;
+                    break;
+                case 'code':
+                    formattedText = selectedText.includes('\n') ? 
+                        `\`\`\`\n${selectedText}\n\`\`\`` : 
+                        `\`${selectedText}\``;
+                    break;
+                case 'link':
+                    formattedText = `[${selectedText}](url)`;
+                    break;
+                case 'list':
+                    formattedText = selectedText.split('\n').map(line => `- ${line}`).join('\n');
+                    break;
+            }
+            
+            // Replace the selected text with the formatted text
+            messageInput.value = 
+                messageInput.value.substring(0, selectionStart) + 
+                formattedText + 
+                messageInput.value.substring(selectionEnd);
+                
+            // Focus back on the textarea
+            messageInput.focus();
+        });
+    });
+    
+    // Close modal
+    closeModalBtn.addEventListener('click', () => {
+        settingsModal.classList.remove('active');
+        // Switch to chat mode when closing settings
+        modeBtns.forEach(btn => {
+            if (btn.dataset.mode === 'chat') {
+                btn.click();
+            }
+        });
+    });
+    
+    // Export conversation
+    exportBtn.addEventListener('click', () => {
+        const messages = JSON.parse(localStorage.getItem('chatMessages')) || [];
+        
+        // Create a formatted string with all messages
+        const formattedMessages = messages.map(msg => {
+            if (msg.role === 'user') {
+                return `USER: ${msg.content}\n\n`;
+            } else if (msg.error) {
+                return `ERROR: ${msg.error}\n\n`;
+            } else {
+                return `${msg.role.toUpperCase()}: ${msg.content}\n\n`;
+            }
+        }).join('');
+        
+        // Create a Blob with the text
+        const blob = new Blob([formattedMessages], { type: 'text/plain' });
+        
+        // Create a download link and trigger the download
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = `gemini-conversation-${new Date().toISOString().slice(0, 10)}.txt`;
+        a.click();
+        
+        // Show success toast
+        showToast('Conversation exported successfully!', 'success');
+    });
+    
+    // Share conversation (copy link)
+    shareBtn.addEventListener('click', () => {
+        // For simplicity, we'll just copy the current URL
+        navigator.clipboard.writeText(window.location.href)
+            .then(() => {
+                showToast('Link copied to clipboard!', 'success');
+            })
+            .catch(() => {
+                showToast('Failed to copy link', 'error');
+            });
+    });
+    
     // Handle clear button click
     clearButton.addEventListener('click', clearAll);
-
-    // Initial fetch of instances
+    
+    // Initial setup
     fetchInstances();
-
-    // Periodically update instances with a longer interval (every 10 seconds instead of 5)
-    setInterval(fetchInstances, 10000);
+    
+    // Update last updated time
+    function updateLastUpdated() {
+        lastUpdatedElement.textContent = 'Just now';
+        setTimeout(() => {
+            lastUpdatedElement.textContent = '1 minute ago';
+        }, 60000);
+    }
+    
+    // Periodically update instances every 10 seconds
+    setInterval(() => {
+        fetchInstances();
+        updateLastUpdated();
+    }, 10000);
+    
+    // Set initial stats
+    messagesCountElement.textContent = (JSON.parse(localStorage.getItem('chatMessages')) || []).length;
+    apiCallsElement.textContent = '0';
+    updateLastUpdated();
+    
+    // Initialize auto-height for textarea
+    messageInput.style.height = 'auto';
+    
+    // Add toast function to window for access throughout the app
+    window.showAppToast = showToast;
 });
 
 // Functions to show/hide loading spinner
@@ -396,28 +841,55 @@ function hideTypingIndicator() {
     if (typingIndicator) typingIndicator.style.display = 'none';
 }
 
-function showErrorToast(message) {
+// Updated toast function with type parameter
+function showToast(message, type = 'error') {
+    // Remove any existing toast
     const existingToast = document.querySelector('.toast');
     if (existingToast) {
         existingToast.remove();
     }
 
+    // Create the new toast
     const toast = document.createElement('div');
-    toast.className = 'toast error';
-    toast.textContent = message;
-
+    toast.className = `toast ${type}`;
+    
+    // Add icon based on type
+    let icon = '';
+    switch(type) {
+        case 'success':
+            icon = '<i class="fas fa-check-circle"></i>';
+            break;
+        case 'error':
+            icon = '<i class="fas fa-exclamation-circle"></i>';
+            break;
+        case 'warning':
+            icon = '<i class="fas fa-exclamation-triangle"></i>';
+            break;
+        case 'info':
+            icon = '<i class="fas fa-info-circle"></i>';
+            break;
+    }
+    
+    toast.innerHTML = `${icon}<span>${message}</span>`;
     document.body.appendChild(toast);
 
+    // Show the toast with a slight delay for animation
     setTimeout(() => {
         toast.classList.add('show');
     }, 10);
 
+    // Hide and remove the toast after 3 seconds
     setTimeout(() => {
         toast.classList.remove('show');
         setTimeout(() => {
             toast.remove();
         }, 300);
     }, 3000);
+}
+
+// Keep the old function for backward compatibility
+function showErrorToast(message) {
+    showToast(message, 'error');
 }
 
 function editMessage(messageData, messageElement) {

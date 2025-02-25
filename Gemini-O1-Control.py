@@ -9,47 +9,25 @@ import pytesseract
 import threading
 import os
 from loguru import logger
+import argparse
 
 from thinking import ProblemSolver, WorkflowStage, APICallError
+from utils_file import RateLimiter
+from config_file import API_KEY, get_model_name, RATE_LIMIT
 
 import requests
 import re
 import base64
-import pyautogui  # Added import
-from collections import deque  # Add import
-
-# Consolidate API key
-API_KEY = "AIzaSyACCbhYudSe-lQzqHZp_yi3KSMbka5kTG8"  # Replace with your actual API key
-
-class RateLimiter:
-    """Rate limiter using a token bucket algorithm."""
-    def __init__(self, rate, per):
-        self.rate = rate
-        self.per = per
-        self.allowance = rate
-        self.last_check = time.time()
-
-    def wait(self):
-        """Wait if necessary to enforce rate limiting."""
-        current = time.time()
-        time_passed = current - self.last_check
-        self.last_check = current
-        self.allowance += time_passed * (self.rate / self.per)
-        if self.allowance > self.rate:
-            self.allowance = self.rate
-        if self.allowance < 1.0:
-            sleep_time = (1.0 - self.allowance) * (self.per / self.rate)
-            time.sleep(sleep_time)
-            self.allowance = 0.0
-        else:
-            self.allowance -= 1.0
+import pyautogui
+from collections import deque
 
 class GeminiAPIClient:
     """Handles API interactions with the Gemini service."""
-    def __init__(self, api_key: str):
-        self.endpoint = "https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent"
+    def __init__(self, api_key: str, model_type: str = "normal"):
+        model = get_model_name(model_type)
+        self.endpoint = f"https://generativelanguage.googleapis.com/v1/models/{model}:generateContent"
         self.api_key = api_key
-        self.rate_limiter = RateLimiter(rate=30, per=60)
+        self.rate_limiter = RateLimiter(max_calls=RATE_LIMIT["max_calls"], period=RATE_LIMIT["period"])
 
     def encode_image_base64(self, image_path):
         """Encode an image to base64."""
@@ -57,48 +35,55 @@ class GeminiAPIClient:
             image_data = f.read()
             return base64.b64encode(image_data).decode('utf-8')
 
-    def call_gemini(self, text_prompt: str, image_path: str) -> str:
-        """Make an API call to Gemini service with text and image."""
+    def call_gemini(self, text_prompt: str, image_path: str = None) -> str:
+        """Make an API call to Gemini service with text and optionally an image."""
         self.rate_limiter.wait()
-        base64_encoded_image = self.encode_image_base64(image_path)
-        request_body = {
-            "contents": [
-                {
-                    "parts": [
-                        {"text": text_prompt},
-                        {
-                            "inlineData": {
-                                "mimeType": "image/png",
-                                "data": base64_encoded_image
-                            }
-                        }
-                    ]
+        
+        # Prepare request parts
+        parts = [{"text": text_prompt}]
+        
+        # Add image if provided
+        if image_path:
+            base64_encoded_image = self.encode_image_base64(image_path)
+            parts.append({
+                "inlineData": {
+                    "mimeType": "image/png",
+                    "data": base64_encoded_image
                 }
-            ]
+            })
+            
+        request_body = {
+            "contents": [{"parts": parts}]
         }
-        headers = {
-            'Content-Type': 'application/json'
-        }
+        
+        headers = {'Content-Type': 'application/json'}
+        
         try:
             response = requests.post(
                 f"{self.endpoint}?key={self.api_key}",
                 headers=headers,
                 json=request_body
             )
+            
             if response.status_code == 429:
                 logger.warning("Received 429 Too Many Requests. Sleeping for 60 seconds.")
                 time.sleep(60)
                 return self.call_gemini(text_prompt, image_path)  # Retry after sleep
+                
             response.raise_for_status()
             gemini_response = response.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
             logger.info(f"Gemini response: '{gemini_response}'")
             return gemini_response
+            
         except Exception as e:
             logger.error(f"API call error: {str(e)}")
             raise APICallError(f"API call failed: {str(e)}") from e
 
-# Initialize GeminiAPIClient once
-api_client = GeminiAPIClient(api_key=API_KEY)
+# Initialize GeminiAPIClient once with model type from args
+api_client = None
+def initialize_api_client(model_type):
+    global api_client
+    api_client = GeminiAPIClient(api_key=API_KEY, model_type=model_type)
 
 def get_ai_decision(screenshot_path, decision_type, screen_dimensions):
     # Load the screenshot
@@ -109,7 +94,7 @@ def get_ai_decision(screenshot_path, decision_type, screen_dimensions):
         Based on the provided screenshot and the screen dimensions {screen_dimensions}, determine the pixel coordinates (x, y) where the AI should move or click.
         Please provide the coordinates in the format 'x, y'.
         """
-        response = api_client.call_gemini(prompt)
+        response = api_client.call_gemini(prompt, screenshot_path)
         if response:
             match = re.search(r'(\d+)\s*,\s*(\d+)', response)
             if match:
@@ -121,7 +106,7 @@ def get_ai_decision(screenshot_path, decision_type, screen_dimensions):
         Based on the extracted text from the screenshot and the screen dimensions {screen_dimensions}, determine what input should be entered.
         Extracted Text: {text.strip()}
         """
-        response = api_client.call_gemini(prompt)
+        response = api_client.call_gemini(prompt, screenshot_path)
         return response.strip() if response else 'Hello World'
     return None
 
@@ -214,7 +199,14 @@ def handle_user_input(browser, screenshot_path, screen_dimensions):
             break
         
 def main():
-    logger.info("Starting Gemini-O1-Control")
+    # Parse command line arguments
+    parser = argparse.ArgumentParser(description='Gemini-O1-Control')
+    parser.add_argument('--model', type=str, default='normal', choices=['normal', 'thinking'],
+                       help='Model type to use (normal or thinking)')
+    args = parser.parse_args()
+    
+    logger.info(f"Starting Gemini-O1-Control with {args.model} model")
+    initialize_api_client(args.model)
     firefox_options = Options()
     firefox_options.accept_insecure_certs = True  # Accept insecure certificates
     browser = webdriver.Firefox(options=firefox_options)  # Changed to Firefox
@@ -231,16 +223,17 @@ def main():
     user_input_thread.join()
 
     interaction_plan = []  # Initialize interaction plan
-    execute_interactions(interaction_plan)  # Start the recursive interaction loop
+    execute_interactions(browser, interaction_plan)  # Start the recursive interaction loop
 
     logger.info("Terminating Gemini-O1-Control")
     browser.quit()
 
 # New Functions for Recursive Task Execution Loop and Gemini API Integration
 
-def execute_interactions(interaction_plan):
+def execute_interactions(browser, interaction_plan):
     """Continuously prompt Gemini to open YouTube, including last 10 mouse movements."""
-    while True:
+    global api_client
+    while True and api_client is not None:
         # Prepare the prompt with the last 10 mouse movements
         movements_str = ', '.join([f"({x}, {y})" for x, y in mouse_movements])
         prompt = f"""

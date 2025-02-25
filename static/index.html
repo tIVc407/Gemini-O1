@@ -3,61 +3,255 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>turf-or-nothing</title>
+    <title>Gemini-O1 Interface</title>
     <link rel="stylesheet" href="style.css">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+    <script src="https://d3js.org/d3.v7.min.js"></script>
 </head>
 <body>
     <div class="app-container">
-        <!-- Left Sidebar removed -->
+        <!-- Left Sidebar -->
+        <div class="left-sidebar">
+            <div class="app-logo">
+                <img src="https://upload.wikimedia.org/wikipedia/commons/8/8e/Google_Bard_logo.svg" alt="Gemini Logo" class="logo">
+                <h1>Gemini-O1</h1>
+            </div>
+            <div class="mode-selector">
+                <button class="mode-btn active" data-mode="chat">
+                    <i class="fas fa-comment-dots"></i> Chat
+                </button>
+                <button class="mode-btn" data-mode="workflow">
+                    <i class="fas fa-project-diagram"></i> Workflow
+                </button>
+                <button class="mode-btn" data-mode="settings">
+                    <i class="fas fa-cog"></i> Settings
+                </button>
+            </div>
+            <div class="templates">
+                <h3><i class="fas fa-bookmark"></i> Templates</h3>
+                <ul class="templates-list">
+                    <li data-template="code">Generate Python Code</li>
+                    <li data-template="plan">Create Project Plan</li>
+                    <li data-template="analysis">Analyze Data</li>
+                    <li data-template="content">Generate Content</li>
+                    <li data-template="custom"><i class="fas fa-plus"></i> Add Custom...</li>
+                </ul>
+            </div>
+            <div class="session-stats">
+                <h3><i class="fas fa-chart-line"></i> Session Stats</h3>
+                <div class="stat-item">
+                    <span>Nodes Active:</span>
+                    <span id="nodes-count">0</span>
+                </div>
+                <div class="stat-item">
+                    <span>Messages:</span>
+                    <span id="messages-count">0</span>
+                </div>
+                <div class="stat-item">
+                    <span>API Calls:</span>
+                    <span id="api-calls">0</span>
+                </div>
+            </div>
+        </div>
 
         <!-- Main Content -->
         <div class="main-content">
             <!-- Top Navigation -->
             <div class="top-nav">
+                <div class="menu-toggle">
+                    <i class="fas fa-bars"></i>
+                </div>
                 <div class="channel-info">
-                    <span class="hashtag">#</span>
-                    <span class="channel-name">turf-or-nothing</span>
+                    <i class="fas fa-brain"></i>
+                    <span class="channel-name">Gemini Workspace</span>
+                    <span class="status-badge">Online</span>
                 </div>
                 <div class="search-bar">
-                    <input type="text" placeholder="Search">
+                    <i class="fas fa-search"></i>
+                    <input type="text" placeholder="Search conversations...">
                 </div>
                 <div class="nav-icons">
-                    <span class="icon">🔔</span>
-                    <span class="icon">📌</span>
-                    <span class="icon">👥</span>
-                    <span class="icon clear" title="Clear chat and reset nodes">🗑️</span>
-                    <span class="icon">⚙️</span>
+                    <button class="icon-btn" title="Export Conversation">
+                        <i class="fas fa-download"></i>
+                    </button>
+                    <button class="icon-btn" title="Share Conversation">
+                        <i class="fas fa-share-alt"></i>
+                    </button>
+                    <button class="icon-btn clear" title="Clear chat and reset nodes">
+                        <i class="fas fa-trash-alt"></i>
+                    </button>
+                    <div class="theme-toggle" title="Toggle Dark/Light Mode">
+                        <i class="fas fa-moon"></i>
+                    </div>
                 </div>
             </div>
 
             <!-- Chat Area -->
             <div class="chat-area">
+                <div class="workflow-diagram" style="display: none;">
+                    <!-- Visual workflow diagram will be shown here when in workflow mode -->
+                    <div class="diagram-placeholder">
+                        <i class="fas fa-project-diagram"></i>
+                        <p>Interactive workflow diagram will appear here</p>
+                    </div>
+                </div>
+                
                 <div class="messages">
                     <!-- Messages will be dynamically added here -->
+                    <div class="welcome-message">
+                        <h2>Welcome to Gemini-O1</h2>
+                        <p>Ask anything to start a conversation with Gemini AI.</p>
+                        <div class="quick-prompts">
+                            <button class="prompt-chip">Generate Python Code</button>
+                            <button class="prompt-chip">Create a Project Plan</button>
+                            <button class="prompt-chip">Analyze a Dataset</button>
+                            <button class="prompt-chip">Write a Story</button>
+                        </div>
+                    </div>
                 </div>
+                
                 <div class="loading-spinner" style="display: none;">
-                    <!-- Loading spinner icon -->
-                    <span class="spinner-icon">⏳</span>
+                    <div class="spinner"></div>
+                    <span>Processing your request...</span>
                 </div>
+                
                 <div class="typing-indicator" style="display: none;">
-                    Someone is typing...
+                    <div class="typing-dots">
+                        <span class="dot"></span>
+                        <span class="dot"></span>
+                        <span class="dot"></span>
+                    </div>
+                    <span>Gemini is thinking...</span>
                 </div>
-                <div class="message-input">
-                    <input type="text" placeholder="Message #turf-or-nothing">
+                
+                <div class="message-input-container">
+                    <div class="formatting-toolbar">
+                        <button title="Bold"><i class="fas fa-bold"></i></button>
+                        <button title="Italic"><i class="fas fa-italic"></i></button>
+                        <button title="Code"><i class="fas fa-code"></i></button>
+                        <button title="Link"><i class="fas fa-link"></i></button>
+                        <button title="List"><i class="fas fa-list"></i></button>
+                        <button title="Upload File"><i class="fas fa-paperclip"></i></button>
+                    </div>
+                    <div class="message-input">
+                        <textarea placeholder="Ask Gemini anything..." rows="1"></textarea>
+                        <button class="send-button">
+                            <i class="fas fa-paper-plane"></i>
+                        </button>
+                    </div>
+                    <div class="input-options">
+                        <span class="input-option">Press Enter to send, Shift+Enter for new line</span>
+                        <span class="input-option">Drag & drop files to upload</span>
+                    </div>
                 </div>
             </div>
         </div>
 
         <!-- Right Sidebar -->
         <div class="right-sidebar">
+            <div class="sidebar-header">
+                <h3><i class="fas fa-network-wired"></i> Network Nodes</h3>
+                <button class="refresh-nodes" title="Refresh Nodes">
+                    <i class="fas fa-sync-alt"></i>
+                </button>
+            </div>
+            
+            <div class="node-filters">
+                <button class="node-filter active" data-filter="all">All</button>
+                <button class="node-filter" data-filter="active">Active</button>
+                <button class="node-filter" data-filter="master">Scrum Master</button>
+            </div>
+            
             <div class="online-users">
                 <!-- Nodes will be dynamically added here -->
+                <div class="node-loading">
+                    <div class="spinner small"></div>
+                    <span>Loading nodes...</span>
+                </div>
+            </div>
+            
+            <div class="node-details" style="display: none;">
+                <div class="node-details-header">
+                    <h3>Node Details</h3>
+                    <button class="close-details">
+                        <i class="fas fa-times"></i>
+                    </button>
+                </div>
+                <div class="node-details-content">
+                    <!-- Node details will go here -->
+                </div>
+            </div>
+            
+            <div class="system-status">
+                <div class="status-item">
+                    <i class="fas fa-server"></i>
+                    <span>System Status: </span>
+                    <span class="status-value online">Online</span>
+                </div>
+                <div class="status-item">
+                    <i class="fas fa-clock"></i>
+                    <span>Last Updated: </span>
+                    <span class="status-value" id="last-updated">Just now</span>
+                </div>
             </div>
         </div>
     </div>
+    
+    <!-- Modals -->
+    <div class="modal" id="settings-modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>Settings</h2>
+                <button class="close-modal"><i class="fas fa-times"></i></button>
+            </div>
+            <div class="modal-body">
+                <div class="settings-section">
+                    <h3>Appearance</h3>
+                    <div class="setting-item">
+                        <label for="theme-select">Theme</label>
+                        <select id="theme-select">
+                            <option value="dark">Dark</option>
+                            <option value="light">Light</option>
+                            <option value="system">System Default</option>
+                        </select>
+                    </div>
+                    <div class="setting-item">
+                        <label>Font Size</label>
+                        <div class="font-size-control">
+                            <button class="font-size-decrease">A-</button>
+                            <span class="font-size-value">16px</span>
+                            <button class="font-size-increase">A+</button>
+                        </div>
+                    </div>
+                </div>
+                <div class="settings-section">
+                    <h3>API Settings</h3>
+                    <div class="setting-item">
+                        <label for="model-select">Model</label>
+                        <select id="model-select">
+                            <option value="normal">Gemini-1.5-Flash</option>
+                            <option value="thinking">Gemini-2.0-Flash-Thinking</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="settings-section">
+                    <h3>Advanced</h3>
+                    <div class="setting-item">
+                        <label>Clear All Data</label>
+                        <button class="danger-button">Clear History</button>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="secondary-button">Cancel</button>
+                <button class="primary-button">Save Changes</button>
+            </div>
+        </div>
+    </div>
+    
     <script src="script.js"></script>
 </body>
 </html>

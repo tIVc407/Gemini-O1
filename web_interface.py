@@ -10,8 +10,10 @@ import os
 import threading
 import json
 import markdown2
+import time
 from functools import partial
 from threading import Thread
+from config_file import RATE_LIMIT
 
 logging.getLogger('werkzeug').setLevel(logging.WARNING)
 logging.getLogger('flask_limiter').setLevel(logging.WARNING)
@@ -129,11 +131,62 @@ def get_instances():
     try:
         future = asyncio.run_coroutine_threadsafe(network.list_instances(), loop)
         result = future.result(timeout=10)
+        
+        # Add icon and additional details for mother node
         if 'mother_node' in result:
             result['mother_node']['icon'] = get_node_icon(result['mother_node']['role'])
+            result['mother_node']['status'] = 'active'
+            result['mother_node']['model'] = network.mother_node.model_name
+            result['mother_node']['created_at'] = network.mother_node.created_at
+            result['mother_node']['message_count'] = len(network.mother_node.history)
+            result['mother_node']['connected_to'] = list(network.mother_node.connected_instances.keys())
+            result['mother_node']['last_active'] = time.time()
+            result['mother_node']['response_time_avg'] = 1.5  # Mock value - would track actual response times
+        
+        # Add icon and additional details for instances
         if 'instances' in result:
             for instance in result['instances']:
-                instance['icon'] = get_node_icon(instance['role'])
+                instance_id = instance['id']
+                if instance_id in network.instances:
+                    instance_obj = network.instances[instance_id]
+                    instance['icon'] = get_node_icon(instance['role'])
+                    instance['status'] = 'active' if instance_obj.task_completed else 'idle'
+                    instance['model'] = instance_obj.model_name
+                    instance['created_at'] = instance_obj.created_at
+                    instance['message_count'] = len(instance_obj.history)
+                    instance['connected_to'] = list(instance_obj.connected_instances.keys())
+                    instance['outputs_count'] = len(instance_obj.outputs)
+                    instance['last_active'] = time.time() - (0 if instance_obj.task_completed else 300)
+                    instance['response_time_avg'] = 2.0  # Mock value - would track actual response times
+                    
+                    # Add last message info if available
+                    if instance_obj.history:
+                        instance['last_message'] = {
+                            'text': instance_obj.history[-1]['text'][:100] + "..." if len(instance_obj.history[-1]['text']) > 100 else instance_obj.history[-1]['text'],
+                            'timestamp': time.time()
+                        }
+                    
+        # Add overall network stats
+        total_instances = len(network.instances) + 1  # +1 for mother node
+        active_instances = sum(1 for inst in network.instances.values() if inst.task_completed)
+        total_messages = sum(len(inst.history) for inst in network.instances.values())
+        if network.mother_node:
+            total_messages += len(network.mother_node.history)
+            
+        result['stats'] = {
+            'total_instances': total_instances,
+            'active_instances': active_instances,
+            'total_messages': total_messages,
+            'network_created_at': network.mother_node.created_at if network.mother_node else 0,
+            'network_uptime': time.time() - (network.mother_node.created_at if network.mother_node else time.time()),
+            'completion_rate': (active_instances / total_instances) * 100 if total_instances > 0 else 0,
+            'api_usage': {
+                'total_calls': total_messages,
+                'rate_limit': f"{RATE_LIMIT['max_calls']} per {RATE_LIMIT['period']}s",
+                'current_usage': min(total_messages % RATE_LIMIT['max_calls'], RATE_LIMIT['max_calls'])
+            }
+        }
+        
         return jsonify(result)
     except Exception as e:
         logger.error(f"Error listing instances: {str(e)}")
@@ -225,6 +278,55 @@ def clear_all():
 def typing():
     return jsonify({"status": "typing received"})
 
+@app.route('/api/instance/<instance_id>', methods=['GET'])
+@limiter.limit("100 per minute")
+def get_instance_details(instance_id):
+    if not network:
+        return jsonify({'error': 'Network not initialized'}), 503
+    
+    try:
+        # Check if it's the mother node
+        if instance_id == "mother" and network.mother_node:
+            details = {
+                'id': network.mother_node.instance_id,
+                'name': network.mother_node.name,
+                'role': network.mother_node.role,
+                'model': network.mother_node.model_name,
+                'icon': get_node_icon(network.mother_node.role),
+                'created_at': network.mother_node.created_at,
+                'status': 'active',
+                'connected_instances': list(network.mother_node.connected_instances.keys()),
+                'history': [{'role': msg.get('role', 'system'), 'text': msg.get('text', '')} 
+                            for msg in network.mother_node.history],
+                'outputs': network.mother_node.outputs
+            }
+            return jsonify(details)
+        
+        # Check if it's a regular instance
+        elif instance_id in network.instances:
+            instance = network.instances[instance_id]
+            details = {
+                'id': instance.instance_id,
+                'name': instance.name,
+                'role': instance.role,
+                'model': instance.model_name,
+                'icon': get_node_icon(instance.role),
+                'created_at': instance.created_at,
+                'status': 'active' if instance.task_completed else 'idle',
+                'connected_instances': list(instance.connected_instances.keys()),
+                'history': [{'role': msg.get('role', 'system'), 'text': msg.get('text', '')} 
+                            for msg in instance.history],
+                'outputs': instance.outputs
+            }
+            return jsonify(details)
+        
+        else:
+            return jsonify({'error': 'Instance not found'}), 404
+            
+    except Exception as e:
+        logger.error(f"Error getting instance details: {str(e)}")
+        return jsonify({'error': 'Failed to get instance details'}), 500
+
 @app.route('/api/edit_message', methods=['POST'])
 def edit_message():
     data = request.get_json()
@@ -237,6 +339,113 @@ def delete_message():
     data = request.get_json()
     message_id = data.get('message_id')
     return jsonify({'status': 'success'})
+
+@app.route('/api/network/stats', methods=['GET'])
+@limiter.limit("60 per minute")
+def get_network_stats():
+    """Get detailed network statistics including performance metrics."""
+    if not network:
+        return jsonify({'error': 'Network not initialized'}), 503
+    
+    try:
+        # Calculate basic stats
+        total_instances = len(network.instances) + 1  # +1 for mother node
+        active_instances = sum(1 for inst in network.instances.values() if inst.task_completed)
+        total_messages = sum(len(inst.history) for inst in network.instances.values())
+        if network.mother_node:
+            total_messages += len(network.mother_node.history)
+            
+        # Get role distribution
+        role_distribution = {}
+        for instance in network.instances.values():
+            role = instance.role
+            if role in role_distribution:
+                role_distribution[role] += 1
+            else:
+                role_distribution[role] = 1
+                
+        # Add mother node role
+        if network.mother_node:
+            mother_role = network.mother_node.role
+            if mother_role in role_distribution:
+                role_distribution[mother_role] += 1
+            else:
+                role_distribution[mother_role] = 1
+        
+        # Calculate model usage
+        model_usage = {}
+        for instance in network.instances.values():
+            model = instance.model_name
+            if model in model_usage:
+                model_usage[model] += 1
+            else:
+                model_usage[model] = 1
+                
+        # Add mother node model
+        if network.mother_node:
+            mother_model = network.mother_node.model_name
+            if mother_model in model_usage:
+                model_usage[mother_model] += 1
+            else:
+                model_usage[mother_model] = 1
+                
+        # Network topology data (connections between nodes)
+        network_connections = []
+        for instance_id, instance in network.instances.items():
+            for connected_id in instance.connected_instances:
+                network_connections.append({
+                    'source': instance_id,
+                    'target': connected_id
+                })
+                
+        # Calculate uptime
+        network_start_time = network.mother_node.created_at if network.mother_node else time.time()
+        uptime_seconds = time.time() - network_start_time
+        
+        # Format uptime nicely
+        days, remainder = divmod(uptime_seconds, 86400)
+        hours, remainder = divmod(remainder, 3600)
+        minutes, seconds = divmod(remainder, 60)
+        formatted_uptime = f"{int(days)}d {int(hours)}h {int(minutes)}m {int(seconds)}s"
+        
+        stats = {
+            'general': {
+                'total_instances': total_instances,
+                'active_instances': active_instances,
+                'total_messages': total_messages,
+                'network_created_at': network_start_time,
+                'uptime': formatted_uptime,
+                'uptime_seconds': uptime_seconds,
+                'completion_rate': round((active_instances / total_instances) * 100, 2) if total_instances > 0 else 0
+            },
+            'api_usage': {
+                'total_calls': total_messages,
+                'rate_limit': f"{RATE_LIMIT['max_calls']} per {RATE_LIMIT['period']}s",
+                'current_usage': min(total_messages % RATE_LIMIT['max_calls'], RATE_LIMIT['max_calls']),
+                'usage_percent': round((min(total_messages % RATE_LIMIT['max_calls'], RATE_LIMIT['max_calls']) / RATE_LIMIT['max_calls']) * 100, 2)
+            },
+            'distribution': {
+                'roles': role_distribution,
+                'models': model_usage
+            },
+            'network_graph': {
+                'nodes': total_instances,
+                'connections': len(network_connections),
+                'connection_data': network_connections
+            },
+            'performance': {
+                'avg_response_time': 2.3,  # Mock value - would calculate from actual timing data
+                'instances_created_count': total_instances,
+                'peak_concurrent_instances': total_instances,
+                'message_throughput': round(total_messages / (uptime_seconds / 60), 2) if uptime_seconds > 0 else 0  # messages per minute
+            }
+        }
+        
+        return jsonify(stats)
+        
+    except Exception as e:
+        logger.error(f"Error getting network stats: {str(e)}")
+        return jsonify({'error': 'Failed to get network statistics'}), 500
 
 def initialize_network():
     global network

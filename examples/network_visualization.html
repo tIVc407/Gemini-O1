@@ -1,0 +1,644 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Gemini-O1 Network Visualization</title>
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+    <style>
+        body {
+            font-family: 'Segoe UI', Arial, sans-serif;
+            margin: 0;
+            padding: 0;
+            background-color: #121212;
+            color: #ffffff;
+        }
+        
+        .container {
+            display: flex;
+            flex-direction: column;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        
+        h1 {
+            text-align: center;
+            margin-bottom: 30px;
+            color: #5865f2;
+        }
+        
+        .dashboard {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+        
+        .card {
+            background-color: #1E1E1E;
+            border-radius: 8px;
+            padding: 15px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        }
+        
+        .card h2 {
+            margin-top: 0;
+            margin-bottom: 15px;
+            font-size: 18px;
+            color: #5865f2;
+            border-bottom: 1px solid #333;
+            padding-bottom: 8px;
+        }
+        
+        .stat-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 10px;
+        }
+        
+        .stat-item {
+            background-color: #2D2D2D;
+            border-radius: 6px;
+            padding: 10px;
+            display: flex;
+            flex-direction: column;
+        }
+        
+        .stat-item .label {
+            font-size: 12px;
+            opacity: 0.7;
+        }
+        
+        .stat-item .value {
+            font-size: 20px;
+            font-weight: bold;
+            margin-top: 4px;
+        }
+        
+        .graph-container {
+            background-color: #1E1E1E;
+            border-radius: 8px;
+            padding: 15px;
+            margin-bottom: 30px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        }
+        
+        .graph-container h2 {
+            margin-top: 0;
+            margin-bottom: 15px;
+            font-size: 18px;
+            color: #5865f2;
+            border-bottom: 1px solid #333;
+            padding-bottom: 8px;
+        }
+        
+        #graph {
+            width: 100%;
+            height: 500px;
+            background-color: #121212;
+            border-radius: 6px;
+        }
+        
+        .controls {
+            display: flex;
+            justify-content: center;
+            margin-bottom: 20px;
+        }
+        
+        button {
+            background-color: #5865f2;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            padding: 8px 15px;
+            margin: 0 5px;
+            cursor: pointer;
+            font-weight: 500;
+        }
+        
+        button:hover {
+            background-color: #4752c4;
+        }
+        
+        .model-distribution, .role-distribution {
+            height: 200px;
+        }
+        
+        .bar {
+            fill: #5865f2;
+            transition: fill 0.3s;
+        }
+        
+        .bar:hover {
+            fill: #7289DA;
+        }
+        
+        .bar-label {
+            font-size: 12px;
+            fill: white;
+        }
+        
+        .node {
+            stroke: #121212;
+            stroke-width: 2px;
+        }
+        
+        .link {
+            stroke: #555;
+            stroke-opacity: 0.6;
+        }
+        
+        .node text {
+            fill: white;
+            font-size: 10px;
+            text-anchor: middle;
+        }
+        
+        .loading {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            height: 100%;
+            font-size: 18px;
+            color: #777;
+        }
+        
+        .spinner {
+            border: 3px solid rgba(255, 255, 255, 0.1);
+            border-radius: 50%;
+            border-top: 3px solid #5865f2;
+            width: 20px;
+            height: 20px;
+            animation: spin 1s linear infinite;
+            margin-right: 10px;
+        }
+        
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Gemini-O1 Network Visualization</h1>
+        
+        <div class="controls">
+            <button id="refresh-btn">Refresh Data</button>
+            <button id="simulate-btn">Simulate Network</button>
+        </div>
+        
+        <div class="dashboard">
+            <div class="card">
+                <h2>Network Overview</h2>
+                <div class="stat-grid">
+                    <div class="stat-item">
+                        <span class="label">Total Instances</span>
+                        <span class="value" id="total-instances">-</span>
+                    </div>
+                    <div class="stat-item">
+                        <span class="label">Active Instances</span>
+                        <span class="value" id="active-instances">-</span>
+                    </div>
+                    <div class="stat-item">
+                        <span class="label">Total Messages</span>
+                        <span class="value" id="total-messages">-</span>
+                    </div>
+                    <div class="stat-item">
+                        <span class="label">Completion Rate</span>
+                        <span class="value" id="completion-rate">-</span>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="card">
+                <h2>Performance Metrics</h2>
+                <div class="stat-grid">
+                    <div class="stat-item">
+                        <span class="label">Uptime</span>
+                        <span class="value" id="uptime">-</span>
+                    </div>
+                    <div class="stat-item">
+                        <span class="label">Avg Response Time</span>
+                        <span class="value" id="avg-response-time">-</span>
+                    </div>
+                    <div class="stat-item">
+                        <span class="label">Message Throughput</span>
+                        <span class="value" id="message-throughput">-</span>
+                    </div>
+                    <div class="stat-item">
+                        <span class="label">API Usage</span>
+                        <span class="value" id="api-usage">-</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <div class="graph-container">
+            <h2>Network Graph</h2>
+            <div id="graph">
+                <div class="loading">
+                    <div class="spinner"></div>
+                    <span>Loading network data...</span>
+                </div>
+            </div>
+        </div>
+        
+        <div class="dashboard">
+            <div class="card">
+                <h2>Model Distribution</h2>
+                <div id="model-chart" class="model-distribution"></div>
+            </div>
+            
+            <div class="card">
+                <h2>Role Distribution</h2>
+                <div id="role-chart" class="role-distribution"></div>
+            </div>
+        </div>
+    </div>
+    
+    <script>
+        // Sample data for testing (replace with actual API call)
+        const sampleData = {
+            general: {
+                total_instances: 8,
+                active_instances: 6,
+                total_messages: 124,
+                uptime: "0d 3h 45m 22s",
+                completion_rate: 75
+            },
+            api_usage: {
+                total_calls: 124,
+                rate_limit: "15 per 60s",
+                current_usage: 5,
+                usage_percent: 33.33
+            },
+            distribution: {
+                roles: {
+                    "scrum_master": 1,
+                    "researcher": 2,
+                    "writer": 2,
+                    "analyst": 1,
+                    "reviewer": 1,
+                    "content-specialist": 1
+                },
+                models: {
+                    "gemini-1.5-flash": 5,
+                    "gemini-2.0-flash-thinking-exp": 3
+                }
+            },
+            network_graph: {
+                nodes: 8,
+                connections: 12,
+                connection_data: [
+                    {source: "mother", target: "inst_1"},
+                    {source: "mother", target: "inst_2"},
+                    {source: "mother", target: "inst_3"},
+                    {source: "mother", target: "inst_4"},
+                    {source: "inst_1", target: "inst_2"},
+                    {source: "inst_1", target: "inst_3"},
+                    {source: "inst_2", target: "inst_4"},
+                    {source: "inst_2", target: "inst_5"},
+                    {source: "inst_3", target: "inst_6"},
+                    {source: "inst_4", target: "inst_7"},
+                    {source: "inst_5", target: "inst_7"},
+                    {source: "inst_6", target: "inst_7"}
+                ]
+            },
+            performance: {
+                avg_response_time: 2.3,
+                instances_created_count: 8,
+                peak_concurrent_instances: 8,
+                message_throughput: 0.54
+            }
+        };
+        
+        // DOM Elements
+        const refreshBtn = document.getElementById('refresh-btn');
+        const simulateBtn = document.getElementById('simulate-btn');
+        const totalInstancesEl = document.getElementById('total-instances');
+        const activeInstancesEl = document.getElementById('active-instances');
+        const totalMessagesEl = document.getElementById('total-messages');
+        const completionRateEl = document.getElementById('completion-rate');
+        const uptimeEl = document.getElementById('uptime');
+        const avgResponseTimeEl = document.getElementById('avg-response-time');
+        const messageThroughputEl = document.getElementById('message-throughput');
+        const apiUsageEl = document.getElementById('api-usage');
+        
+        // Color scale for nodes
+        const roleColors = {
+            "scrum_master": "#8942C1",
+            "researcher": "#4285F4",
+            "writer": "#34A853",
+            "analyst": "#FBBC05",
+            "reviewer": "#EA4335",
+            "content-specialist": "#00C0A3",
+            "developer": "#5865F2",
+            "tester": "#DE38FF",
+            "designer": "#7289DA"
+        };
+        
+        // Default color for unknown roles
+        const defaultColor = "#5865f2";
+        
+        // Nodes and links for the graph
+        let nodes = [];
+        let links = [];
+        
+        // Function to update the dashboard
+        function updateDashboard(data) {
+            totalInstancesEl.textContent = data.general.total_instances;
+            activeInstancesEl.textContent = data.general.active_instances;
+            totalMessagesEl.textContent = data.general.total_messages;
+            completionRateEl.textContent = data.general.completion_rate + "%";
+            uptimeEl.textContent = data.general.uptime;
+            avgResponseTimeEl.textContent = data.performance.avg_response_time + "s";
+            messageThroughputEl.textContent = data.performance.message_throughput + "/min";
+            apiUsageEl.textContent = data.api_usage.usage_percent + "% (" + data.api_usage.current_usage + "/" + data.api_usage.rate_limit.split(' ')[0] + ")";
+            
+            // Create bar charts
+            createBarChart(data.distribution.models, 'model-chart');
+            createBarChart(data.distribution.roles, 'role-chart');
+            
+            // Create network graph
+            createNetworkGraph(data.network_graph);
+        }
+        
+        // Function to create a bar chart
+        function createBarChart(data, elementId) {
+            const element = document.getElementById(elementId);
+            element.innerHTML = '';
+            
+            const width = element.clientWidth;
+            const height = element.clientHeight;
+            const margin = {top: 20, right: 20, bottom: 60, left: 40};
+            const innerWidth = width - margin.left - margin.right;
+            const innerHeight = height - margin.top - margin.bottom;
+            
+            const keys = Object.keys(data);
+            const values = Object.values(data);
+            
+            const svg = d3.select(`#${elementId}`)
+                .append('svg')
+                .attr('width', width)
+                .attr('height', height);
+                
+            const g = svg.append('g')
+                .attr('transform', `translate(${margin.left}, ${margin.top})`);
+                
+            const x = d3.scaleBand()
+                .domain(keys)
+                .range([0, innerWidth])
+                .padding(0.2);
+                
+            const y = d3.scaleLinear()
+                .domain([0, d3.max(values)])
+                .range([innerHeight, 0]);
+                
+            g.append('g')
+                .attr('transform', `translate(0, ${innerHeight})`)
+                .call(d3.axisBottom(x))
+                .selectAll('text')
+                .attr('transform', 'rotate(-45)')
+                .attr('text-anchor', 'end')
+                .attr('x', -8)
+                .attr('y', 6)
+                .style('font-size', '10px')
+                .style('fill', 'white');
+                
+            g.append('g')
+                .call(d3.axisLeft(y).ticks(5))
+                .selectAll('text')
+                .style('fill', 'white');
+                
+            g.selectAll('.domain, .tick line')
+                .style('stroke', '#555');
+                
+            g.selectAll('.bar')
+                .data(keys)
+                .enter()
+                .append('rect')
+                .attr('class', 'bar')
+                .attr('x', d => x(d))
+                .attr('y', d => y(data[d]))
+                .attr('width', x.bandwidth())
+                .attr('height', d => innerHeight - y(data[d]));
+                
+            g.selectAll('.bar-label')
+                .data(keys)
+                .enter()
+                .append('text')
+                .attr('class', 'bar-label')
+                .attr('x', d => x(d) + x.bandwidth() / 2)
+                .attr('y', d => y(data[d]) - 5)
+                .attr('text-anchor', 'middle')
+                .text(d => data[d]);
+        }
+        
+        // Function to create network graph
+        function createNetworkGraph(graphData) {
+            const graphElement = document.getElementById('graph');
+            graphElement.innerHTML = '';
+            
+            const width = graphElement.clientWidth;
+            const height = graphElement.clientHeight;
+            
+            // Create nodes array with unique IDs
+            const uniqueNodes = new Set();
+            graphData.connection_data.forEach(link => {
+                uniqueNodes.add(link.source);
+                uniqueNodes.add(link.target);
+            });
+            
+            nodes = Array.from(uniqueNodes).map(id => {
+                const isMother = id === 'mother';
+                const role = isMother ? 'scrum_master' : 'assistant';
+                return {
+                    id,
+                    role,
+                    radius: isMother ? 20 : 15
+                };
+            });
+            
+            links = graphData.connection_data;
+            
+            const svg = d3.select('#graph')
+                .append('svg')
+                .attr('width', width)
+                .attr('height', height);
+                
+            const simulation = d3.forceSimulation(nodes)
+                .force('link', d3.forceLink(links).id(d => d.id).distance(100))
+                .force('charge', d3.forceManyBody().strength(-300))
+                .force('center', d3.forceCenter(width / 2, height / 2))
+                .force('collision', d3.forceCollide().radius(d => d.radius + 10));
+                
+            const link = svg.append('g')
+                .selectAll('line')
+                .data(links)
+                .enter()
+                .append('line')
+                .attr('class', 'link');
+                
+            const node = svg.append('g')
+                .selectAll('.node')
+                .data(nodes)
+                .enter()
+                .append('g')
+                .attr('class', 'node')
+                .call(d3.drag()
+                    .on('start', dragstarted)
+                    .on('drag', dragged)
+                    .on('end', dragended));
+                    
+            node.append('circle')
+                .attr('r', d => d.radius)
+                .attr('fill', d => roleColors[d.role] || defaultColor);
+                
+            node.append('text')
+                .attr('dy', 30)
+                .text(d => d.id);
+                
+            // Add tooltip for nodes
+            node.append('title')
+                .text(d => `${d.id}\nRole: ${d.role}`);
+                
+            simulation.on('tick', () => {
+                link
+                    .attr('x1', d => d.source.x)
+                    .attr('y1', d => d.source.y)
+                    .attr('x2', d => d.target.x)
+                    .attr('y2', d => d.target.y);
+                    
+                node
+                    .attr('transform', d => `translate(${d.x}, ${d.y})`);
+            });
+            
+            function dragstarted(event, d) {
+                if (!event.active) simulation.alphaTarget(0.3).restart();
+                d.fx = d.x;
+                d.fy = d.y;
+            }
+            
+            function dragged(event, d) {
+                d.fx = event.x;
+                d.fy = event.y;
+            }
+            
+            function dragended(event, d) {
+                if (!event.active) simulation.alphaTarget(0);
+                d.fx = null;
+                d.fy = null;
+            }
+        }
+        
+        // Function to update the graph with new data
+        function updateGraph(graphData) {
+            // Implementation for updating an existing graph when new data arrives
+        }
+        
+        // Function to simulate a growing network (for demo purposes)
+        function simulateNetworkGrowth() {
+            // Start with minimal network
+            let simulatedData = structuredClone(sampleData);
+            simulatedData.general.total_instances = 1;
+            simulatedData.general.active_instances = 1;
+            simulatedData.distribution.roles = {"scrum_master": 1};
+            simulatedData.distribution.models = {"gemini-1.5-flash": 1};
+            simulatedData.network_graph.nodes = 1;
+            simulatedData.network_graph.connections = 0;
+            simulatedData.network_graph.connection_data = [];
+            
+            updateDashboard(simulatedData);
+            
+            // Simulate growth over time
+            let step = 1;
+            const interval = setInterval(() => {
+                if (step >= 7) {
+                    clearInterval(interval);
+                    return;
+                }
+                
+                // Add new node and connections
+                simulatedData.general.total_instances += 1;
+                simulatedData.general.active_instances = Math.min(simulatedData.general.total_instances, step + 1);
+                
+                // Update role distribution
+                const roles = ['researcher', 'writer', 'analyst', 'reviewer', 'content-specialist', 'developer'];
+                const newRole = roles[step - 1];
+                if (!simulatedData.distribution.roles[newRole]) {
+                    simulatedData.distribution.roles[newRole] = 0;
+                }
+                simulatedData.distribution.roles[newRole] += 1;
+                
+                // Update model distribution
+                if (step % 2 === 0) {
+                    if (!simulatedData.distribution.models["gemini-2.0-flash-thinking-exp"]) {
+                        simulatedData.distribution.models["gemini-2.0-flash-thinking-exp"] = 0;
+                    }
+                    simulatedData.distribution.models["gemini-2.0-flash-thinking-exp"] += 1;
+                } else {
+                    simulatedData.distribution.models["gemini-1.5-flash"] += 1;
+                }
+                
+                // Update network graph
+                const newNodeId = `inst_${step}`;
+                simulatedData.network_graph.nodes += 1;
+                
+                // Connect to mother node
+                simulatedData.network_graph.connections += 1;
+                simulatedData.network_graph.connection_data.push({
+                    source: "mother",
+                    target: newNodeId
+                });
+                
+                // Connect to previous node if it exists
+                if (step > 1) {
+                    simulatedData.network_graph.connections += 1;
+                    simulatedData.network_graph.connection_data.push({
+                        source: `inst_${step-1}`,
+                        target: newNodeId
+                    });
+                }
+                
+                // Update messages and other stats
+                simulatedData.general.total_messages += 5 * step;
+                simulatedData.api_usage.total_calls += 5 * step;
+                simulatedData.api_usage.current_usage = (simulatedData.api_usage.current_usage + 2) % 15;
+                simulatedData.api_usage.usage_percent = Math.round((simulatedData.api_usage.current_usage / 15) * 100);
+                simulatedData.performance.message_throughput += 0.15;
+                
+                // Update completion rate
+                simulatedData.general.completion_rate = Math.round((simulatedData.general.active_instances / simulatedData.general.total_instances) * 100);
+                
+                updateDashboard(simulatedData);
+                step++;
+            }, 1500);
+        }
+        
+        // Function to fetch data from API (replace with actual endpoint)
+        async function fetchNetworkStats() {
+            try {
+                const response = await fetch('/api/network/stats');
+                if (!response.ok) {
+                    throw new Error('Network error');
+                }
+                const data = await response.json();
+                updateDashboard(data);
+            } catch (error) {
+                console.error('Error fetching network stats:', error);
+                // Use sample data as fallback
+                updateDashboard(sampleData);
+            }
+        }
+        
+        // Event listeners
+        refreshBtn.addEventListener('click', fetchNetworkStats);
+        simulateBtn.addEventListener('click', simulateNetworkGrowth);
+        
+        // Initial load
+        updateDashboard(sampleData);
+    </script>
+</body>
+</html>

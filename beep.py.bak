@@ -528,72 +528,36 @@ def handle_shutdown(signum, frame):
 signal.signal(signal.SIGINT, handle_shutdown)
 
 async def cli_main():
-    import argparse
-    
-    parser = argparse.ArgumentParser(description="Gemini Network Command Line Interface")
-    subparsers = parser.add_subparsers(dest="command", help="Commands")
-    
-    # Interactive mode command
-    interactive_parser = subparsers.add_parser("interactive", help="Start interactive mode")
-    
-    # Single query command
-    query_parser = subparsers.add_parser("query", help="Execute a single query")
-    query_parser.add_argument("prompt", help="The prompt to send to the Gemini Network")
-    
-    # List instances command
-    list_parser = subparsers.add_parser("list", help="List all active instances")
-    
-    args = parser.parse_args()
-    
-    if not args.command:
-        args.command = "interactive"  # Default to interactive mode
-    
     max_retries = 3
     retry_delay = 1
 
     try:
         async with GeminiNetwork() as network:
-            if args.command == "interactive":
-                print("Gemini CLI initialized. Type 'exit' or 'quit' to exit.")
-                while True:
-                    try:
-                        user_input = input("> ")
-                        if user_input.lower() in ['exit', 'quit']:
+            print("Gemini CLI initialized. Type 'exit' or 'quit' to exit.")
+            while True:
+                try:
+                    user_input = input("> ")
+                    for attempt in range(max_retries):
+                        try:
+                            response = await network.handle_user_input(user_input)
+                            print(f"User: {user_input}")
+                            print(f"Assistant: {response}")
                             break
-                            
-                        for attempt in range(max_retries):
-                            try:
-                                response = await network.handle_user_input(user_input)
-                                print(f"Assistant: {response}")
-                                break
-                            except asyncio.CancelledError:
-                                if attempt < max_retries - 1:
-                                    logger.warning(f"Connection attempt {attempt + 1} failed. Retrying in {retry_delay} seconds...")
-                                    await asyncio.sleep(retry_delay)
-                                    retry_delay *= 2
-                                else:
-                                    logger.error("Max retries reached. Connection failed.")
-                                    raise
-                    except EOFError:
-                        logger.error("Connection to Gemini API lost. Please check your internet connection and try again.")
+                        except asyncio.CancelledError:
+                            if attempt < max_retries - 1:
+                                logger.warning(f"Connection attempt {attempt + 1} failed. Retrying in {retry_delay} seconds...")
+                                await asyncio.sleep(retry_delay)
+                                retry_delay *= 2
+                            else:
+                                logger.error("Max retries reached. Connection failed.")
+                                raise
+                except EOFError:
+                    logger.error("Connection to Gemini API lost. Please check your internet connection and try again.")
+                    break
+                except Exception as e:
+                    logger.error(f"An error occurred: {e}")
+                    if "exit" in str(e).lower():
                         break
-                    except Exception as e:
-                        logger.error(f"An error occurred: {e}")
-            
-            elif args.command == "query":
-                response = await network.handle_user_input(args.prompt)
-                print(response)
-                
-            elif args.command == "list":
-                instances = await network.list_instances()
-                print(f"Mother Node: {instances['mother_node']['role']} (ID: {instances['mother_node']['id']})")
-                if instances['instances']:
-                    print("\nActive Instances:")
-                    for idx, instance in enumerate(instances['instances'], 1):
-                        print(f"{idx}. {instance['role']} (ID: {instance['id']})")
-                else:
-                    print("\nNo active instances.")
-                    
     except Exception as e:
         logger.error(f"A fatal error occurred during initialization: {e}")
     finally:

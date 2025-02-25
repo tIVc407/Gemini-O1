@@ -1,3 +1,36 @@
+import os
+from dotenv import load_dotenv
+import logging
+
+# Load environment variables from .env file if it exists
+load_dotenv()
+
+# API Configuration
+API_KEY = os.getenv("GEMINI_API_KEY", "AIzaSyACCbhYudSe-lQzqHZp_yi3KSMbka5kTG8")
+
+# Model Configuration
+MODELS = {
+    "normal": "gemini-1.5-flash",
+    "thinking": "gemini-2.0-flash-thinking-exp"
+}
+
+# Rate Limiting
+RATE_LIMIT = {
+    "max_calls": 15,
+    "period": 60  # in seconds
+}
+
+# Logging Configuration
+LOG_CONFIG = {
+    "level": logging.INFO,
+    "format": '%(asctime)s [%(levelname)s] %(name)s: %(message)s',
+    "file": "app.log"
+}
+
+def get_model_name(model_type):
+    """Get the model name based on the model type."""
+    return MODELS.get(model_type, MODELS["normal"])
+
 class AppConfig:
     """Application configuration settings."""
     

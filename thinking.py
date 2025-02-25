@@ -1,12 +1,24 @@
 import google.generativeai as genai
-# Removed: import PIL.Image
+from enum import Enum
+
+class WorkflowStage(Enum):
+    PLANNING = "planning"
+    EXECUTION = "execution"
+    REVIEW = "review"
+
+class APICallError(Exception):
+    """Exception raised for API call errors"""
+    pass
 
 class ProblemSolver:
-    def __init__(self, api_key):
+    def __init__(self, api_key, model_type="normal"):
         self.api_key = api_key
         genai.configure(api_key=self.api_key)
-        # Initialize generative models
-        self.model = genai.GenerativeModel('gemini-1.5-flash')
+        # Initialize generative models based on type
+        if model_type == "thinking":
+            self.model = genai.GenerativeModel('gemini-2.0-flash-thinking-exp-01-21')
+        else:  # default to normal mode
+            self.model = genai.GenerativeModel('gemini-1.5-flash')
 
     def solve_problem(self, message_history):
         try:
