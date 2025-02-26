@@ -31,7 +31,7 @@ jobs:
 
     - name: Run tests
       env:
-        GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY || 'fake-api-key-for-testing' }}
       run: |
         pytest --cov=. --cov-report=xml
 
