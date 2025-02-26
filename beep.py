@@ -116,7 +116,11 @@ class GeminiNetwork:
             raise ValueError(f"Failed to load prompts: {e}")
 
     def normalize_instance_id(self, identifier: str) -> str:
-        return identifier.replace(" ", "-").lower()
+        # First replace underscores with hyphens
+        result = identifier.replace("_", "-")
+        # Then replace one or more spaces with a single hyphen
+        result = "-".join(part for part in result.split() if part)
+        return result.lower()
 
     @retry_on_exception()
     async def _initialize_mother_node(self):

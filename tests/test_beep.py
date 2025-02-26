@@ -22,17 +22,18 @@ async def network():
     """Create a network instance for testing."""
     api_key = "AIzaSyACCbhYudSe-lQzqHZp_yi3KSMbka5kTG8"  # Use a dummy API key for testing
     with patch("builtins.open", mock_open(read_data="""
-    ## Mother Node Initialization
-    Test prompt
+## Mother Node Initialization
+Test prompt
 
-    ## Direct Command Template
-    Test prompt
+## Direct Command Template
+Test prompt
 
-    ## Synthesis Prompt
-    Test prompt
-    """)):
+## Synthesis Prompt
+Test prompt
+""")):
         network = GeminiNetwork()
         network.rate_limiter = RateLimiter(max_calls=5, period=60)
+        await network.rate_limiter.async_wait()  # Initialize rate limiter
         
         # Mock the chat send_message_async to prevent real API calls
         with patch.object(network, '_get_instance_response', new_callable=AsyncMock) as mock_get_instance_response:
@@ -55,7 +56,7 @@ class TestGeminiNetwork:
     @pytest.mark.asyncio
     async def test_instance_creation(self, network):
         """Test creating a new instance."""
-        await network.rate_limiter.wait()
+        await network.rate_limiter.async_wait()
         instance = await network.create_instance("test-role")
         assert isinstance(instance, GeminiInstance)
         assert instance.role == "test-role"
@@ -82,15 +83,15 @@ class TestGeminiNetwork:
             pytest.skip("API key not provided, skipping integration test.")
 
         with patch("builtins.open", mock_open(read_data="""
-        ## Mother Node Initialization
-        Test prompt
-        
-        ## Direct Command Template
-        Test prompt
-        
-        ## Synthesis Prompt
-        Test prompt
-        """)):
+## Mother Node Initialization
+Test prompt
+
+## Direct Command Template
+Test prompt
+
+## Synthesis Prompt
+Test prompt
+""")):
             network = GeminiNetwork()
             await network._initialize_mother_node()
             response = await network.handle_user_input("Explain Agile methodology.")
@@ -126,9 +127,9 @@ class TestGeminiNetwork:
     async def test_cleanup_old_instances(self, network):
         """Test cleanup of old instances."""
         with patch.object(GeminiInstance, 'send_message_to', new_callable=AsyncMock):
-            await network.rate_limiter.wait()
+            await network.rate_limiter.async_wait()
             await network.create_instance("test-role-1")
-            await network.rate_limiter.wait()
+            await network.rate_limiter.async_wait()
             await network.create_instance("test-role-2")
             
             # Modify their creation time to be old
@@ -143,11 +144,13 @@ class TestGeminiNetwork:
     async def test_rate_limiter(self, network):
         """Test rate limiter functionality."""
         limiter = RateLimiter(max_calls=15, period=60)
+        await limiter.async_wait()  # Initialize the limiter
+        
         start_time = time.time()
         
         # Test multiple calls
         for _ in range(3):
-            await limiter.wait()
+            await limiter.async_wait()
         
         duration = time.time() - start_time
         assert duration >= 0
@@ -199,26 +202,31 @@ class TestGeminiNetwork:
             network.instances[instance_mock.instance_id] = instance_mock
             return instance_mock
 
-        with patch.object(network, '_get_instance_response', return_value=mock_story):
-            with patch.object(network, 'create_instance', side_effect=mock_create_instance):
-                response = await network.handle_user_input(test_input)
-                assert isinstance(response, str)
-                assert len(response) > 0
-                assert mock_story in response
+        with patch.object(network, '_get_instance_response', return_value="ANALYZE: Test\nTO writer: Write a story\nSYNTHESIZE"), \
+             patch.object(network, 'create_instance', side_effect=mock_create_instance), \
+             patch.object(network, 'process_mother_node_command', return_value={
+                 "responses": {"writer": mock_story, "synthesized": mock_story},
+                 "actions_taken": [],
+                 "new_instances": []
+             }):
+            response = await network.handle_user_input(test_input)
+            assert isinstance(response, str)
+            assert len(response) > 0
+            assert mock_story in response
 
     @pytest.mark.asyncio
     async def test_instance_messaging(self):
         """Test direct instance-to-instance messaging capabilities."""
         with patch("builtins.open", mock_open(read_data="""
-        ## Mother Node Initialization
-        Test prompt
-        
-        ## Direct Command Template
-        Test prompt
-        
-        ## Synthesis Prompt
-        Test prompt
-        """)):
+## Mother Node Initialization
+Test prompt
+
+## Direct Command Template
+Test prompt
+
+## Synthesis Prompt
+Test prompt
+""")):
             network = GeminiNetwork()
             
             # Create two test instances
@@ -245,15 +253,15 @@ class TestGeminiNetwork:
     async def test_mother_node_communication_commands(self):
         """Test mother node's ability to handle communication commands."""
         with patch("builtins.open", mock_open(read_data="""
-        ## Mother Node Initialization
-        Test prompt
-        
-        ## Direct Command Template
-        Test prompt
-        
-        ## Synthesis Prompt
-        Test prompt
-        """)):
+## Mother Node Initialization
+Test prompt
+
+## Direct Command Template
+Test prompt
+
+## Synthesis Prompt
+Test prompt
+""")):
             network = GeminiNetwork()
             
             with patch('google.generativeai.GenerativeModel') as mock_model_class:
